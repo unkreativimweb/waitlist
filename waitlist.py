@@ -4,6 +4,9 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from spotipy.oauth2 import SpotifyOAuth
 import inquirer
+from datetime import datetime
+import google.generativeai as genai
+import requests
 
 # load environment variables from .env file
 dotenv.load_dotenv()
@@ -26,9 +29,13 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
     cache_path=".spotify_cache"  # Store token locally to avoid re-authentication
 ))
 
-def get_user_data(
-        
-):
+# Configure Gemini API
+GOOGLE_API_KEY = os.getenv('gemini_api_key')
+genai.configure(api_key=GOOGLE_API_KEY) # use configure instead of client
+global model
+model = genai.GenerativeModel('gemini-1.5-flash-latest') #specify the model
+
+def from_where():
     # Get all user playlists and create a list of choices
     all_playlists = sp.current_user_playlists()
     playlist_choices = [item['name'] for item in all_playlists['items']]
@@ -191,4 +198,82 @@ def get_user_data(
 
     return None  # Return None if no selection was made
 
-get_user_data()
+def get_discovery_type():
+    what_type = [
+        inquirer.List('what_type',
+            message="What do you want to do?",
+            choices=[
+                'i want to hear the same music as a playlist/song etc.',
+                'mood',
+                'genre',
+                'discover new releases',
+                'top charts',
+                'recommendations based on time of day',
+                'decade specific music',
+            ]),
+    ]
+
+    discovery = inquirer.prompt(what_type)
+
+    if discovery['what_type'] == 'i want to hear the same music as a playlist/song etc.':
+        print("You chose to hear the same music as a playlist/song.")
+        return '"the same music as"'
+    elif discovery['what_type'] == 'mood':
+        print("You chose mood-based music.")
+        return '"the same mood as"'
+    elif discovery['what_type'] == 'genre':
+        print("You chose genre-based music.")
+        return '"the same genre as"'
+    elif discovery['what_type'] == 'discover new releases':
+        print("You chose to discover new releases.")
+        return '"new releases"'
+    elif discovery['what_type'] == 'top charts':
+        print("You chose top charts.")
+        return '"top charts"'
+    elif discovery['what_type'] == 'recommendations based on time of day':
+        print("You chose recommendations based on time of day.")
+        current_time = datetime.now().strftime("%H:%M")
+        return f'recommendations based on the time of day ({current_time})'
+    elif discovery['what_type'] == 'decade specific music':
+        print("You chose decade-specific music.")
+        return '"music in the same decade as"'
+    
+def ask_ai(discovery_type, origin, limit): # ask AI for recommendations based on user input
+    print('DIscovery Type: ', discovery_type) # Print the discovery type
+    print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
+    response = model.generate_content(
+        "You are a music recommendation system. " +
+        "You will need to analyze tempo, key, instrumentation, lyrical themes, and overall vibe of the input. " +
+        "Youre supposed to give recommendatios based on the following input: " +
+        f"Discovery Type (what type of music to get): {discovery_type}, Origin (where to get it from): {origin}. " +
+        f"Output Format: Output a list-like string with maximum {limit} recommendations. (like [trackname - trackauthor, trackname2 - etc.])" +
+        "If theres logical error in the input (i.e. trying to discover the charts from origin of a single song), return: 'ERROR: Please check your input and try again'. " +
+        "If you cant access some data, return: 'ERROR: I cannot access this data [datatype i.e. playlist]'. " +
+        "IF ANYTHING ELSE GOES WRONG THEN OUTPUT JUST 'ERROR: [your error]' NOTHING ELSE "
+    )
+    print("AI Response: ", response.text) # Print the AI's response
+
+def id_to_track_name(track_id):
+    # Get track details using the track ID
+    element = sp.track(track_id)
+    # Extract the track name and artist name
+    element_name = element['name']
+    if element['type'] == 'track':
+        artist_name = element['artists'][0]['name']
+        return f"{element_name} ({element['type']}) - {artist_name}"
+    elif element['type'] == 'album':
+        return f"{element_name} - Album"
+    elif element['type'] == 'artist':
+        return f"{element_name} - Artist"
+    elif element['type'] == 'playlist':
+        return f"{element_name} - Playlist"
+    else:
+        return f"{element_name} - Unknown Type"
+        
+    
+
+discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
+origin_id = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
+origin_name = id_to_track_name(origin_id) # convert id to name (for AI input) -> returns string
+limit = 10 # TODO: make this user input
+ask_ai(discovery_type, origin_name, limit) # ask AI for recommendations based on user input

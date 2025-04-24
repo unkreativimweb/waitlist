@@ -10,6 +10,8 @@ coming soon...
 ### Prerequisites
 
 - Python 3.8 or higher
+- Gemini Account
+- [Gemini API Key](https://aistudio.google.com/app/u/1/apikey)
 - Spotify Account
 - [Spotify Developer Account](https://developer.spotify.com/dashboard)
 ---
@@ -54,8 +56,6 @@ REDIRECT_URI="https://127.0.0.1"
 - Make sure your `REDIRECT_URI` in `.env` matches exactly what's in your Spotify App settings
 - Check that you've granted all required permissions when authorizing
 
-
-
 ## 🔑 Spotify API Setup
 
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
@@ -67,12 +67,11 @@ REDIRECT_URI="https://127.0.0.1"
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
 
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## 🙏 Acknowledgments
 
-- [Spotipy](https://spotipy.readthedocs.io/)
-- [Inquirer](https://python-inquirer.readthedocs.io/)
-- [Python-dotenv](https://github.com/theskumar/python-dotenv)
+- [Spotipy](https://spotipy.readthedocs.io/) - Handles all Spotify API interactions including playlist management, track searching, and user authentication. Used for accessing and manipulating Spotify data throughout the application.
+- [Inquirer](https://python-inquirer.readthedocs.io/) - Creates the interactive CLI menu system for selecting music discovery types, choosing playlists, and navigating search results. Makes the user interface clean and intuitive.
+- [Python-dotenv](https://github.com/theskumar/python-dotenv) - Manages API credentials securely by loading them from a local `.env` file, keeping sensitive Spotify and Gemini API keys separate from the code.
+- [TheAudioDB](https://www.theaudiodb.com/free_music_api) - Enriches track recommendations by providing additional metadata like genres, moods, and themes that aren't available through Spotify's API. Helps create more accurate music suggestions.
+- [Gemini](https://aistudio.google.com/) - Powers the intelligent recommendation system by analyzing track characteristics and user preferences to generate personalized music suggestions based on various criteria like mood, genre, or similar artists.
+- soon: [Genius](https://docs.genius.com) - Will add lyrical analysis capabilities to enhance music recommendations by considering song themes and meanings.
