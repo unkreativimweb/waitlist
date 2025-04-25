@@ -26,7 +26,7 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
     client_id=SPOTIFY_CLIENT_ID,
     client_secret=SPOTIFY_CLIENT_SECRET,
     redirect_uri=REDIRECT_URI,
-    scope="playlist-read-private playlist-read-collaborative user-library-read",  # Added user-library-read scope
+    scope="playlist-read-private playlist-read-collaborative user-library-read playlist-modify-public playlist-modify-private",  # Added user-library-read scope
     cache_path=".spotify_cache"  # Store token locally to avoid re-authentication
 ))
 
@@ -46,7 +46,14 @@ def from_where():
     type_question = [
         inquirer.List('search_type',
             message="Do you want to search for a playlist or a song?",
-            choices=['playlist', 'song', 'liked songs', 'album', 'artist', 'None - Search all songs']),
+            choices=[ # TODO: make other options functional
+                # 'playlist', # (is possible to search for a playlist)
+                'song', 
+                # 'liked songs', 
+                # 'album',
+                # 'artist',
+                # 'None - Search all songs'
+            ]),
     ]
     playlist_question = [
         inquirer.List('playlist',
@@ -55,9 +62,10 @@ def from_where():
     ]
 
     # Get user's search preference (playlist or song)
-    wanted_type = inquirer.prompt(type_question)
+    global origin_type
+    origin_type = inquirer.prompt(type_question)
 
-    if wanted_type['search_type'] == 'playlist':
+    if origin_type['search_type'] == 'playlist':
         # Handle playlist selection
         chosen_playlist = inquirer.prompt(playlist_question)
         print(f"Selected playlist: {chosen_playlist['playlist']}")
@@ -69,7 +77,7 @@ def from_where():
                 playlist_id = item['id']
                 return item['id']
 
-    elif wanted_type['search_type'] == 'song':
+    elif origin_type['search_type'] == 'song':
         # Handle song search
         track_name = input("Enter the name of the song you want to search for: ")
         track_results = sp.search(q='track:' + track_name, type='track', limit=50)  # Search up to 50 tracks
@@ -108,7 +116,7 @@ def from_where():
         print(f"Selected song: {selected_track} (ID: {track_id})")
         return track_id
     
-    elif wanted_type['search_type'] == 'liked songs':
+    elif origin_type['search_type'] == 'liked songs':
         # Get user's liked songs (saved tracks)
         results = sp.current_user_saved_tracks()
         liked_tracks = []
@@ -135,7 +143,7 @@ def from_where():
         print(f"Selected liked song: {selected_track} (ID: {track_id})")
         return track_id
 
-    elif wanted_type['search_type'] == 'album':
+    elif origin_type['search_type'] == 'album':
         # Get album name from user
         album_name = input("Enter the name of the album you want to search for: ")
         album_results = sp.search(q='album:' + album_name, type='album', limit=20)
@@ -168,7 +176,7 @@ def from_where():
         print(f"Selected album: {selected_album} (ID: {album_id})")
         return album_id
     
-    elif wanted_type['search_type'] == 'artist':
+    elif origin_type['search_type'] == 'artist':
         # Get artist name from user
         artist_name = input("Enter the name of the artist you want to search for: ")
         artist_results = sp.search(q='artist:' + artist_name, type='artist', limit=20)
@@ -242,14 +250,20 @@ def get_discovery_type():
         print("You chose decade-specific music.")
         return '"music in the same decade as"'
     
-def ask_ai(discovery_type, origin, limit, track_attributes): # ask AI for recommendations based on user input
+def ask_ai(discovery_type, origin, limit, track_attributes):
+    '''
+    This function sends a request to the AI model for music recommendations based on the provided parameters.
+    It includes error handling for various scenarios and formats the response accordingly.
+    It has the possibility to check if the Gemini API is working properly. (if needed)
+    '''
+
     # if not check_gemini_status():
     #     print("❌ Gemini API is not working properly")
     #     return "ERROR: Gemini API unavailable"
-    # print('DIscovery Type: ', discovery_type) # Print the discovery type
+
     print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
     print('Limit: ', limit) # Print the limit (number of recommendations)
-    # print('Track Attributes: ', track_attributes) # Print the track attributes (if any)
+    track_attributes = json.dumps(track_attributes) # Convert track attributes to JSON string for AI input
     response = model.generate_content(
         """You are a music recommendation engine. Your task is to recommend music based on the following criteria:
 
@@ -279,7 +293,7 @@ def ask_ai(discovery_type, origin, limit, track_attributes): # ask AI for recomm
     print("==================================================\n")
     return response.text
 
-def id_to_track_name(track_id):
+def id_to_element_name(track_id):
     # Get track details using the track ID
     element = sp.track(track_id)
     # Extract the track name and artist name
@@ -385,19 +399,121 @@ def process_track_recommendation(origin_name, discovery_type, limit):
     
     # Verify recommendation count
     if len(recommendations) != limit:
-        print(f"⚠️ Warning: Got {len(recommendations)} recommendations instead of requested {limit}")
+        print(f"⚠️ PSA: Got {len(recommendations)} recommendations instead of requested {limit}")
     
     return recommendations
 
+class PlaylistManager:
+    def __init__(self, sp):
+        self.sp = sp
+        self.playlist = None
+
+    def create_playlist(self, username):
+        playlist_description = PlaylistManager.get_playlist_description(discovery_type, origin_name, origin_type)
+        playlist_name = PlaylistManager.get_playlist_name(origin_name, origin_type, discovery_type)
+        self.playlist = self.sp.user_playlist_create(
+            user=username,
+            name=playlist_name,
+            public=False,
+            collaborative=False,
+            description=playlist_description
+        )
+
+    def get_playlist_cover_image(playlist_id):
+        # TODO: get_playlist_cover_image
+        pass
+
+    def get_playlist_name(origin_name, origin_type, discovery_type):
+        """
+        Generate a playlist name based on the origin name and discovery type
+        Args:
+            origin_name (str): Name of the original track/playlist/album/artist
+            origin_type (str): Type of origin wanted
+            discovery_type (str): Type of discovery/recommendation wanted
+        Returns:
+            str: Generated playlist name
+        """
+        return f"{discovery_type} - {origin_name} ({origin_type})"
+
+    def get_playlist_description(discovery_type, origin_name, origin_type):
+        """
+        Generate a playlist description based on the discovery type and origin name
+        Args:
+            discovery_type (str): Type of discovery/recommendation wanted
+            origin_name (str): Name of the original track/playlist/album/artist
+        Returns:
+            str: Generated playlist description
+        """
+        return f"Discover {discovery_type} music based on the {origin_type}: {origin_name}"
+
+    def process_playlist_recommendation(origin_name, recommendations):
+        pass
+
+    def fill_playlist(self, recommendations):
+        # get recommended track uris
+        recommended_track_ids = []
+        max_retries = 3  # Number of retries for each track
+        for rec in recommendations:
+            name, artist = rec.split('-')
+            for attempt in range(max_retries):
+                try:
+                    result = self.sp.search(
+                        q=f'track:{name} artist:{artist}',
+                        type='track',
+                        limit=1,
+                    )
+                    if result['tracks']['items']:
+                        track_uri = result['tracks']['items'][0]['uri']
+                        recommended_track_ids.append(track_uri)
+                        print(f"✅ Found track: {name} by {artist}")
+                        break  # Success, exit retry loop
+                    else:
+                        print(f"❌ Could not find track: {name} by {artist}")
+                        break  # No results, no need to retry
+                        
+                except requests.exceptions.Timeout:
+                    if attempt == max_retries - 1:
+                        print(f"⚠️ Timeout error after {max_retries} attempts: {name} by {artist}")
+                    else:
+                        print(f"⚠️ Attempt {attempt + 1} timed out, retrying...")
+                        continue
+                        
+                except Exception as e:
+                    print(f"❌ Error processing track: {e}")
+                    break
+        if recommended_track_ids:
+            self.sp.playlist_add_items(self.playlist['id'], recommended_track_ids)
+            print(f"✅ Added {len(recommended_track_ids)} tracks to the playlist: {self.playlist['name']}")
 
 discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
 origin_id = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
-origin_name = id_to_track_name(origin_id) # convert id to name (for AI input) -> returns string
-limit = 10 # TODO: make this user input
+origin_name = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
+limit = 10 # TODO: make this a user input
 
 if is_track:
     recommendations = process_track_recommendation(origin_name, discovery_type, limit)
     print(f"🎵 Found {len(recommendations)} recommendations:")
     for i, rec in enumerate(recommendations, 1):
         print(f"{i}. {rec}")
-    print("") # print a new line for better readability
+    print("")  # print a new line for better readability
+    
+    # Create playlist manager instance
+    playlist_manager = PlaylistManager(sp)
+    # Create the playlist
+    playlist_manager.create_playlist(sp.me()['id'])
+    # Fill the playlist
+    playlist_manager.fill_playlist(recommendations)
+
+'''
+TODO:
+- add a function to create a playlist with the recommendations x
+- add a function to add the recommendations to the playlist x
+- add posibility to add to queue
+- database is not really uptodate (maybe use a different one?)
+- add a function to get the playlist cover image (if available)
+'''
+
+# playlist_replace_items(playlist_id, items)
+# playlist_upload_cover_image(playlist_id, image_b64)
+
+# SEARCHING: https://developer.spotify.com/documentation/web-api/reference/search
