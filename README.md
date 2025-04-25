@@ -1,5 +1,6 @@
 # 🎵 MOOD - Your Spotify Music Explorer
 A command-line interface tool to explore and manage your Spotify music in style. Features coming soon...
+> ⚠️ **Project Status: In Development**  
 ## ⚠️ Disclaimer
 This project is not hosted - you'll need to create your own Spotify Developer application and use your own API credentials to run this code.
 
