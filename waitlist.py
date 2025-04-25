@@ -7,6 +7,7 @@ import inquirer
 from datetime import datetime
 import google.generativeai as genai
 import requests
+import json
 
 # load environment variables from .env file
 dotenv.load_dotenv()
@@ -97,9 +98,12 @@ def from_where():
         
         # Get user's track selection and return the corresponding track ID
         answer = inquirer.prompt(track_question)
+        print("==========this is for debugging purposes==========\n")
         selected_track = answer['track']
         global track_id
         track_id = track_info[selected_track]
+        global is_track
+        is_track = True  # Set flag to indicate a track was selected
         
         print(f"Selected song: {selected_track} (ID: {track_id})")
         return track_id
@@ -238,20 +242,42 @@ def get_discovery_type():
         print("You chose decade-specific music.")
         return '"music in the same decade as"'
     
-def ask_ai(discovery_type, origin, limit): # ask AI for recommendations based on user input
-    print('DIscovery Type: ', discovery_type) # Print the discovery type
+def ask_ai(discovery_type, origin, limit, track_attributes): # ask AI for recommendations based on user input
+    # if not check_gemini_status():
+    #     print("❌ Gemini API is not working properly")
+    #     return "ERROR: Gemini API unavailable"
+    # print('DIscovery Type: ', discovery_type) # Print the discovery type
     print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
+    print('Limit: ', limit) # Print the limit (number of recommendations)
+    # print('Track Attributes: ', track_attributes) # Print the track attributes (if any)
     response = model.generate_content(
-        "You are a music recommendation system. " +
-        "You will need to analyze tempo, key, instrumentation, lyrical themes, and overall vibe of the input. " +
-        "Youre supposed to give recommendatios based on the following input: " +
-        f"Discovery Type (what type of music to get): {discovery_type}, Origin (where to get it from): {origin}. " +
-        f"Output Format: Output a list-like string with maximum {limit} recommendations. (like [trackname - trackauthor, trackname2 - etc.])" +
-        "If theres logical error in the input (i.e. trying to discover the charts from origin of a single song), return: 'ERROR: Please check your input and try again'. " +
-        "If you cant access some data, return: 'ERROR: I cannot access this data [datatype i.e. playlist]'. " +
-        "IF ANYTHING ELSE GOES WRONG THEN OUTPUT JUST 'ERROR: [your error]' NOTHING ELSE "
+        """You are a music recommendation engine. Your task is to recommend music based on the following criteria:
+
+        Input Parameters:
+        - Discovery Type: {discovery_type} (defines what kind of music to recommend)
+        - Origin: {origin} (the reference point for recommendations)
+        - Track Attributes: {track_attributes} (musical characteristics to consider)
+        
+        Response Rules:
+        1. Output Format: ONLY return a comma-separated list of 'song-artist' pairs
+        2. Maximum Recommendations: {limit}
+        3. Format Example: "Bohemian Rhapsody-Queen, Yesterday-The Beatles"
+        
+        Error Handling:
+        - If logical error: return "ERROR: Invalid input combination"
+        - If missing data: return "ERROR: Cannot access required data"
+        - For any other error: return "ERROR: [specific error message]"
+        
+        DO NOT include any additional text, explanations, or formatting.""".format(
+            discovery_type=discovery_type,
+            origin=origin,
+            track_attributes=json.dumps(track_attributes),
+            limit=limit
+        )
     )
     print("AI Response: ", response.text) # Print the AI's response
+    print("==================================================\n")
+    return response.text
 
 def id_to_track_name(track_id):
     # Get track details using the track ID
@@ -269,11 +295,109 @@ def id_to_track_name(track_id):
         return f"{element_name} - Playlist"
     else:
         return f"{element_name} - Unknown Type"
+
+def check_gemini_status():
+    """Check if Gemini API is properly configured and working"""
+    try:
+        # Test the model with a simple prompt
+        test_response = model.generate_content("Reply with 'OK' if you can read this.")
+        if test_response and test_response.text.strip() == "OK":
+            return True
+        else:
+            print("⚠️ Gemini API response is not as expected")
+            return False
+    except Exception as e:
+        print(f"❌ Gemini API Error: {e}")
+        return False
+
+def get_audio_db_info(artist_name, track_name):
+    """
+    Get track information from TheAudioDB API
+    Returns: dict with track information or None if not found
+    """
+    # TheAudioDB API endpoint
+    url = f"https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s={artist_name.strip().replace(" ", "%20")}&t={track_name.strip().replace(" ", "%20")}"
+    # print(f"audiodb API URL: {url}")  # Print the API URL for debugging
+    try:
+        response = requests.get(url)
+        # print(f"audiodb API Response: {response}")  # Print the API response status code
+        data = response.json()
+        # print(f"audiodb API Data: {data}")  # Print the API response data for debugging
         
+        if not data['track'] or len(data['track']) == 0:
+            print(f"No data found for {track_name} by {artist_name}")
+            return None
+            
+        track = data['track'][0]
+        # print(f"Track data: {track["strMood"]}")  # Print the track data for debugging
+        return {
+            'idLyric': track.get('idLyric', None),
+            'intDuration': track.get('intDuration', None),
+            'strGenre': track.get('strGenre', None),
+            'strMood': track.get('strMood', None),
+            'strStyle': track.get('strStyle', None),
+            'strTheme': track.get('strTheme', None),
+            'intTotalPlays': track.get('intTotalPlays', None)
+        }
+        
+    except Exception as e:
+        print(f"Error getting track info: {e}")
+        return None
+
+def string_to_list(string):
+    """
+    Convert a comma-separated string to a list of song-artist pairs
+    Returns: List of strings, each formatted as 'song-artist'
+    """
+    # Split by comma and clean each entry
+    items = [item.strip() for item in string.split(',')]
     
+    # Remove any empty strings and clean newlines
+    cleaned_items = [item.replace('\n', '') for item in items if item]
+    
+    # print("Converted list: ", cleaned_items)
+    return cleaned_items
+
+def process_track_recommendation(origin_name, discovery_type, limit):
+    """
+    Process a track and get AI recommendations based on its attributes
+    Args:
+        origin_name (str): Track name in format "Song Name (type) - Artist"
+        discovery_type (str): Type of discovery/recommendation wanted
+        limit (int): Number of recommendations to return
+    Returns:
+        list: List of recommended tracks
+    """
+    # Extract track name and artist from the formatted string
+    track_name = origin_name.split(' - ')[0].split('(')[0].strip()
+    artist_name = origin_name.split(' - ')[1].strip()
+    
+    # print(f"Processing track: '{track_name}' by '{artist_name}'")
+    
+    # Get additional track information from TheAudioDB
+    track_attributes = get_audio_db_info(track_name, artist_name)
+    
+    # Get AI recommendations
+    ai_response = ask_ai(discovery_type, origin_name, limit, track_attributes)
+    
+    # Convert AI response to list of recommendations
+    recommendations = string_to_list(str(ai_response))
+    
+    # Verify recommendation count
+    if len(recommendations) != limit:
+        print(f"⚠️ Warning: Got {len(recommendations)} recommendations instead of requested {limit}")
+    
+    return recommendations
+
 
 discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
 origin_id = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
 origin_name = id_to_track_name(origin_id) # convert id to name (for AI input) -> returns string
 limit = 10 # TODO: make this user input
-ask_ai(discovery_type, origin_name, limit) # ask AI for recommendations based on user input
+
+if is_track:
+    recommendations = process_track_recommendation(origin_name, discovery_type, limit)
+    print(f"🎵 Found {len(recommendations)} recommendations:")
+    for i, rec in enumerate(recommendations, 1):
+        print(f"{i}. {rec}")
+    print("") # print a new line for better readability
