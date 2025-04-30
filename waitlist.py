@@ -530,12 +530,10 @@ class PlaylistManager:
         recommended_track_ids = []
         max_retries = 3  # Number of retries for each track
         for rec in recommendations:
-            if rec.count('-') == 1:
-                # Split the recommendation into track name and artist
-                name, artist = rec.split('-')
-            else:
-                print(f"❌ Invalid recommendation format: {rec}, this error will be fixed in the future")
-                return
+            # Split the string into name and artist
+            # FIXME: not very redundant, but works for now
+            name, artist = [part.strip() for part in rec.rsplit('-', 1)]
+            # Get track info from TheAudioDB
             for attempt in range(max_retries):
                 try:
                     result = self.sp.search(
