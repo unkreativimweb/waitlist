@@ -4,37 +4,475 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from spotipy.oauth2 import SpotifyOAuth
 import inquirer
-from datetime import datetime
+from datetime import datetime, date
 import google.generativeai as genai
 import requests
 import json
 
-# load environment variables from .env file
-dotenv.load_dotenv()
-SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
-SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-REDIRECT_URI = os.getenv("REDIRECT_URI") 
 
-# Initialize the Spotify client
-client_credentials_manager = SpotifyClientCredentials(
-    client_id=SPOTIFY_CLIENT_ID,
-    client_secret=SPOTIFY_CLIENT_SECRET
-)   
+# 1. Environment setup
 
-# Initialize Spotify client with OAuth for user authentication
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=SPOTIFY_CLIENT_ID,
-    client_secret=SPOTIFY_CLIENT_SECRET,
-    redirect_uri=REDIRECT_URI,
-    scope="playlist-read-private playlist-read-collaborative user-library-read playlist-modify-public playlist-modify-private",  # Added user-library-read scope
-    cache_path=".spotify_cache"  # Store token locally to avoid re-authentication
-))
+def load_env_variables():
+    """Load environment variables from .env file"""
+    dotenv.load_dotenv()
+    SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
+    SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
+    REDIRECT_URI = os.getenv("REDIRECT_URI") 
+    GOOGLE_API_KEY = os.getenv('gemini_api_key')
+    return SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY
 
-# Configure Gemini API
-GOOGLE_API_KEY = os.getenv('gemini_api_key')
-genai.configure(api_key=GOOGLE_API_KEY) # use configure instead of client
-global model
-model = genai.GenerativeModel('gemini-1.5-flash-latest') #specify the model
+def initialize_spotify_client():
+    """Initialize the Spotify client with credentials"""
+    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, _ = load_env_variables()
+    
+    # Initialize the Spotify client
+    client_credentials_manager = SpotifyClientCredentials(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET
+    )
+    
+    # Initialize Spotify client with OAuth for user authentication
+    global sp
+    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET,
+        redirect_uri=REDIRECT_URI,
+        scope="playlist-read-private playlist-read-collaborative user-library-read playlist-modify-public playlist-modify-private user-modify-playback-state",  # Added user-modify-playback-state
+        cache_path=".spotify_cache"
+    ))
+    
+    return sp
+
+def initialize_gemini_client():
+    # Configure Gemini API
+    *_, GOOGLE_API_KEY = load_env_variables()  # Use asterisk to unpack and ignore other values
+    genai.configure(api_key=GOOGLE_API_KEY) # use configure instead of client
+    global model
+    model = genai.GenerativeModel('gemini-1.5-flash') #specify the model
+
+# 2. Cache Management
+
+def update_cache_data(key, value):
+    """Update a specific key in the cache file while preserving other data"""
+    try:
+        # Read existing cache data
+        cache_data = {}
+        try:
+            with open('.cache', 'r') as cache:
+                cache_data = json.load(cache)
+        except (FileNotFoundError, json.JSONDecodeError):
+            # File doesn't exist or is empty/invalid
+            pass
+
+        # Update the specific key
+        cache_data[key] = value
+
+        # Write back all data
+        with open('.cache', 'w') as cache:
+            json.dump(cache_data, cache)
+            
+        return True
+    except Exception as e:
+        print(f"❌ Error updating cache: {e}")
+        return False
+
+def load_cache_data():
+    """Load cache data from the cache file"""
+    global default_limit, default_playlist_name, default_playlist_id
+
+    if os.path.exists('.cache'):
+        with open('.cache', 'r') as cache:
+            cache_data = json.load(cache)
+            default_limit = cache_data.get('default_limit', None)
+    else: default_limit = None # read the default playlist name from the cache (if it exists)
+    
+    if os.path.exists('.cache'):
+        with open('.cache', 'r') as cache:
+            cache_data = json.load(cache)
+            default_playlist_name = cache_data.get('default_playlist_name', None)
+            default_playlist_id = cache_data.get('default_playlist_id', None)
+        if default_playlist_name is not None:
+            if default_playlist_id != element_name_to_id(default_playlist_name, "playlist"):
+                print(f"Default playlist name '{default_playlist_name}' does not match the ID '{default_playlist_id}'. Please check your cache.")
+                print("default playlist id: ", default_playlist_id)
+                print("default playlist name: ", default_playlist_name)
+                print("playlist id from name: ", playlist_manager.find_user_playlist_id(default_playlist_name))
+            else: 
+                print("cache matches")
+    else: 
+        default_playlist_name = None # read the default playlist name from the cache (if it exists)
+        print("No cache file found. Please set one ('.cache') to save the default playlist name.")
+    
+
+# 3. Utility Functions
+
+def string_to_list(string):
+    """
+    Convert a comma-separated string to a list of song-artist pairs
+    Returns: List of strings, each formatted as 'song-artist'
+    """
+    # Split by comma and clean each entry
+    items = [item.strip() for item in string.split(',')]
+    
+    # Remove any empty strings and clean newlines
+    cleaned_items = [item.replace('\n', '') for item in items if item]
+    
+    # print("Converted list: ", cleaned_items)
+    return cleaned_items
+
+def check_gemini_status():
+    """Check if Gemini API is properly configured and working"""
+    try:
+        # Test the model with a simple prompt
+        test_response = model.generate_content("Reply with 'OK' if you can read this.")
+        if test_response and test_response.text.strip() == "OK":
+            return True
+        else:
+            print("⚠️ Gemini API response is not as expected")
+            return False
+    except Exception as e:
+        print(f"❌ Gemini API Error: {e}")
+        return False
+
+def id_to_element_name(element_id):
+    """
+    Convert a Spotify ID to a readable name, handling different types (track, playlist, album, artist)
+    Args:
+        element_id (str): Spotify ID of the element
+    Returns:
+        str: Formatted name of the element
+    """
+    try:
+        # First try as playlist
+        try:
+            element = sp.playlist(element_id)
+            return f"{element['name']} (playlist)"
+        except:
+            pass
+        
+        # Then try as track
+        try:
+            element = sp.track(element_id)
+            return f"{element['name']} (track) - {element['artists'][0]['name']}"
+        except:
+            pass
+        
+        # Then try as album
+        try:
+            element = sp.album(element_id)
+            return f"{element['name']} (album) - {element['artists'][0]['name']}"
+        except:
+            pass
+        
+        # Finally try as artist
+        try:
+            element = sp.artist(element_id)
+            return f"{element['name']} (artist)"
+        except:
+            pass
+            
+        raise Exception("Could not identify element type")
+        
+    except Exception as e:
+        print(f"Error getting element name: {e}")
+        return f"Unknown Element ({element_id})"
+
+def element_name_to_id(element_name, element_type):
+    """
+    Convert a readable name to a Spotify ID, handling different types (track, playlist, album, artist)
+    Args:
+        element_name (str): Readable name of the element
+        element_type (str): Type of the element (track, playlist, album, artist)
+    Returns:
+        str: Spotify ID of the element
+    """
+    try:
+        if element_type == 'playlist':
+            playlists = sp.current_user_playlists()
+            for item in playlists['items']:
+                if item['name'] == element_name:
+                    return item['id']
+        
+        elif element_type == 'track':
+            results = sp.search(q='track:' + element_name, type='track', limit=1)
+            if results['tracks']['items']:
+                return results['tracks']['items'][0]['id']
+        
+        elif element_type == 'album':
+            results = sp.search(q='album:' + element_name, type='album', limit=1)
+            if results['albums']['items']:
+                return results['albums']['items'][0]['id']
+        
+        elif element_type == 'artist':
+            results = sp.search(q='artist:' + element_name, type='artist', limit=1)
+            if results['artists']['items']:
+                return results['artists']['items'][0]['id']
+        
+        raise Exception("Could not identify element type")
+        
+    except Exception as e:
+        print(f"Error converting name to ID: {e}")
+        return None
+
+# 4. External API Calls
+
+def ask_ai(discovery_type, origin, limit, track_attributes):
+    '''
+    This function sends a request to the AI model for music recommendations based on the provided parameters.
+    It includes error handling for various scenarios and formats the response accordingly.
+    It has the possibility to check if the Gemini API is working properly. (if needed)
+    '''
+
+    # if not check_gemini_status():
+    #     print("❌ Gemini API is not working properly")
+    #     return "ERROR: Gemini API unavailable"
+
+    print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
+    print('Limit: ', limit) # Print the limit (number of recommendations)
+    track_attributes = json.dumps(track_attributes) # Convert track attributes to JSON string for AI input
+    response = model.generate_content(
+        """You are a music recommendation engine. Your task is to recommend music based on the following criteria:
+
+        Input Parameters:
+        - Discovery Type: {discovery_type} (defines what kind of music to recommend)
+        - Origin: {origin} (the reference point for recommendations)
+        - Track Attributes: {track_attributes} (musical characteristics to consider)
+        
+        Response Rules:
+        1. Output Format: ONLY return a comma-separated list of 'song-artist' pairs
+        2. Maximum Recommendations: {limit}
+        3. Format Example: "Bohemian Rhapsody-Queen, Yesterday-The Beatles"
+        
+        Error Handling:
+        - If logical error: return "ERROR: Invalid input combination"
+        - If missing data: return "ERROR: Cannot access required data"
+        - For any other error: return "ERROR: [specific error message]"
+        
+        DO NOT include any additional text, explanations, or formatting.""".format(
+            discovery_type=discovery_type,
+            origin=origin,
+            track_attributes=json.dumps(track_attributes),
+            limit=limit
+        )
+    )
+    print("AI Response: ", response.text) # Print the AI's response
+    print("==================================================\n")
+    return response.text
+
+def get_audio_db_info(artist_name, track_name):
+    """
+    Get track information from TheAudioDB API
+    Returns: dict with track information or None if not found
+    """
+    # TheAudioDB API endpoint
+    url = f"https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s={artist_name.strip().replace(" ", "%20")}&t={track_name.strip().replace(" ", "%20")}"
+    # print(f"audiodb API URL: {url}")  # Print the API URL for debugging
+    try:
+        response = requests.get(url)
+        # print(f"audiodb API Response: {response}")  # Print the API response status code
+        data = response.json()
+        # print(f"audiodb API Data: {data}")  # Print the API response data for debugging
+        
+        if not data['track'] or len(data['track']) == 0:
+            print(f"No data found for {track_name} by {artist_name}")
+            return None
+            
+        track = data['track'][0]
+        # print(f"Track data: {track["strMood"]}")  # Print the track data for debugging
+        return {
+            'idLyric': track.get('idLyric', None),
+            'intDuration': track.get('intDuration', None),
+            'strGenre': track.get('strGenre', None),
+            'strMood': track.get('strMood', None),
+            'strStyle': track.get('strStyle', None),
+            'strTheme': track.get('strTheme', None),
+            'intTotalPlays': track.get('intTotalPlays', None)
+        }
+        
+    except Exception as e:
+        print(f"Error getting track info: {e}")
+        return None
+
+# 5. Playlist Management
+
+class PlaylistManager:
+    def __init__(self, sp):
+        self.sp = sp
+        self.playlist = None
+
+    def create_playlist(self, username, playlist_name=None):
+        # playlist_description = PlaylistManager.get_playlist_description(discovery_type, origin_name, origin_type)
+        if playlist_name is None:
+            playlist_name = PlaylistManager.get_playlist_name()
+
+        self.playlist = self.sp.user_playlist_create(
+            user=username,
+            name=playlist_name,
+            public=False,
+            collaborative=False,
+            # description=playlist_description
+        )
+
+    def get_playlist_cover_image(playlist_id):
+        # TODO: get_playlist_cover_image
+        pass
+
+    def get_playlist_name():
+        """
+        Generate a playlist name based on the origin name and discovery type
+        Args:
+            origin_name (str): Name of the original track/playlist/album/artist
+            origin_type (str): Type of origin wanted
+            discovery_type (str): Type of discovery/recommendation wanted
+        Returns:
+            str: Generated playlist name
+        """
+        return input (f"Enter a name for the playlist: ") 
+
+    def get_playlist_description():
+        """
+        Generate a playlist description based on the discovery type and origin name
+        Args:
+            discovery_type (str): Type of discovery/recommendation wanted
+            origin_name (str): Name of the original track/playlist/album/artist
+        Returns:
+            str: Generated playlist description
+        """
+        return input (f"Enter a description for the playlist: ")
+
+    def process_playlist_recommendation(origin_name, recommendations):
+        pass
+
+    def change_playlist_name(self, old_name, new_name, is_default_playlist=False): # no need for is_default_playlist here, but maybe later
+        global default_playlist_name
+        # Get all user playlists and find the one to rename
+        if old_name == default_playlist_name:
+            default_playlist_name = new_name
+            # Update the cache with the new default playlist name
+            update_cache_data('default_playlist_name', new_name)
+            print(f"Warning Default playlist name changed from '{old_name}' to '{new_name}'")
+
+        all_playlists = sp.current_user_playlists()
+        for item in all_playlists['items']:
+            if item['name'] == old_name:
+                # Rename the playlist
+                sp.user_playlist_change_details(
+                    user=sp.me()['id'],
+                    playlist_id=item['id'],
+                    name=new_name,
+                    public=False,
+                    collaborative=False,
+                    description=item['description']
+                )
+                if is_default_playlist:
+                    print(f"Default playlist name changed from '{old_name}' to '{new_name}'")
+                else:
+                    print(f"Renamed playlist '{old_name}' to '{new_name}'")
+                return
+
+        print(f"Playlist '{old_name}' not found. No changes made.")
+
+    def find_user_playlist_id(self, playlist_name):
+        """Find a specific playlist ID owned by the current user"""
+        try:
+            # Get all user playlists
+            playlists = self.sp.current_user_playlists()
+            
+            # Search through user's playlists
+            for playlist in playlists['items']:
+                if playlist['name'] == playlist_name and playlist['owner']['id'] == self.sp.me()['id']:
+                    return playlist['id']
+            
+            print(f"❌ Playlist '{playlist_name}' not found in your library")
+            return None
+        except Exception as e:
+            print(f"❌ Error finding playlist: {e}")
+            return None
+
+    def fill_playlist(self, recommendations, playlist_id=None):
+        # get recommended track uris
+        recommended_track_ids = []
+        max_retries = 3  # Number of retries for each track
+        for rec in recommendations:
+            # Split the string into name and artist
+            # TODO: not very redundant, but works for now
+            name, artist = [part.strip() for part in rec.rsplit('-', 1)]
+            # Get track info from TheAudioDB
+            for attempt in range(max_retries):
+                try:
+                    result = self.sp.search(
+                        q=f'track:{name} artist:{artist}',
+                        type='track',
+                        limit=1,
+                    )
+                    if result['tracks']['items']:
+                        track_uri = result['tracks']['items'][0]['uri']
+                        recommended_track_ids.append(track_uri)
+                        print(f"✅ Found track: {name} by {artist}")
+                        break  # Success, exit retry loop
+                    else:
+                        print(f"❌ Could not find track: {name} by {artist}")
+                        break  # No results, no need to retry
+                        
+                except requests.exceptions.Timeout:
+                    if attempt == max_retries - 1:
+                        print(f"⚠️ Timeout error after {max_retries} attempts: {name} by {artist}")
+                    else:
+                        print(f"⚠️ Attempt {attempt + 1} timed out, retrying...")
+                        continue
+                        
+                except Exception as e:
+                    print(f"❌ Error processing track: {e}")
+                    break
+        if recommended_track_ids:
+            # get the playlist id if given
+            if playlist_id:
+                self.sp.playlist_add_items(playlist_id, recommended_track_ids)
+            else:
+                # Add the recommended tracks to the playlist
+                self.sp.playlist_add_items(self.playlist['id'], recommended_track_ids)
+
+# 6. Core Logic
+
+def get_discovery_type():
+    what_type = [
+        inquirer.List('what_type',
+            message="What do you want to do?",
+            choices=[
+                'i want to hear the same music as a playlist/song etc.',
+                'mood',
+                'genre',
+                # 'discover new releases', # TODO: implement this see basic_process
+                # 'top charts', # TODO: implement this see basic_process
+                # 'recommendations based on time of day', # TODO: implement this see basic_process
+                # 'decade specific music', # TODO: implement this see basic_process
+            ]),
+    ]
+
+    discovery = inquirer.prompt(what_type)
+
+    if discovery['what_type'] == 'i want to hear the same music as a playlist/song etc.':
+        print("You chose to hear the same music as a playlist/song.")
+        return '"the same music as"'
+    elif discovery['what_type'] == 'mood':
+        print("You chose mood-based music.")
+        return '"the same mood as"'
+    elif discovery['what_type'] == 'genre':
+        print("You chose genre-based music.")
+        return '"the same genre as"'
+    elif discovery['what_type'] == 'discover new releases':
+        print("You chose to discover new releases.")
+        return '"new releases"'
+    elif discovery['what_type'] == 'top charts':
+        print("You chose top charts.")
+        return '"top charts"'
+    elif discovery['what_type'] == 'recommendations based on time of day':
+        print("You chose recommendations based on time of day.")
+        current_time = datetime.now().strftime("%H:%M")
+        return f'recommendations based on the time of day ({current_time})'
+    elif discovery['what_type'] == 'decade specific music':
+        print("You chose decade-specific music.")
+        return '"music in the same decade as"'
 
 def from_where():
     # Get all user playlists and create a list of choices
@@ -210,194 +648,6 @@ def from_where():
 
     return None  # Return None if no selection was made
 
-def get_discovery_type():
-    what_type = [
-        inquirer.List('what_type',
-            message="What do you want to do?",
-            choices=[
-                'i want to hear the same music as a playlist/song etc.',
-                'mood',
-                'genre',
-                'discover new releases',
-                'top charts',
-                'recommendations based on time of day',
-                'decade specific music',
-            ]),
-    ]
-
-    discovery = inquirer.prompt(what_type)
-
-    if discovery['what_type'] == 'i want to hear the same music as a playlist/song etc.':
-        print("You chose to hear the same music as a playlist/song.")
-        return '"the same music as"'
-    elif discovery['what_type'] == 'mood':
-        print("You chose mood-based music.")
-        return '"the same mood as"'
-    elif discovery['what_type'] == 'genre':
-        print("You chose genre-based music.")
-        return '"the same genre as"'
-    elif discovery['what_type'] == 'discover new releases':
-        print("You chose to discover new releases.")
-        return '"new releases"'
-    elif discovery['what_type'] == 'top charts':
-        print("You chose top charts.")
-        return '"top charts"'
-    elif discovery['what_type'] == 'recommendations based on time of day':
-        print("You chose recommendations based on time of day.")
-        current_time = datetime.now().strftime("%H:%M")
-        return f'recommendations based on the time of day ({current_time})'
-    elif discovery['what_type'] == 'decade specific music':
-        print("You chose decade-specific music.")
-        return '"music in the same decade as"'
-    
-def ask_ai(discovery_type, origin, limit, track_attributes):
-    '''
-    This function sends a request to the AI model for music recommendations based on the provided parameters.
-    It includes error handling for various scenarios and formats the response accordingly.
-    It has the possibility to check if the Gemini API is working properly. (if needed)
-    '''
-
-    # if not check_gemini_status():
-    #     print("❌ Gemini API is not working properly")
-    #     return "ERROR: Gemini API unavailable"
-
-    print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
-    print('Limit: ', limit) # Print the limit (number of recommendations)
-    track_attributes = json.dumps(track_attributes) # Convert track attributes to JSON string for AI input
-    response = model.generate_content(
-        """You are a music recommendation engine. Your task is to recommend music based on the following criteria:
-
-        Input Parameters:
-        - Discovery Type: {discovery_type} (defines what kind of music to recommend)
-        - Origin: {origin} (the reference point for recommendations)
-        - Track Attributes: {track_attributes} (musical characteristics to consider)
-        
-        Response Rules:
-        1. Output Format: ONLY return a comma-separated list of 'song-artist' pairs
-        2. Maximum Recommendations: {limit}
-        3. Format Example: "Bohemian Rhapsody-Queen, Yesterday-The Beatles"
-        
-        Error Handling:
-        - If logical error: return "ERROR: Invalid input combination"
-        - If missing data: return "ERROR: Cannot access required data"
-        - For any other error: return "ERROR: [specific error message]"
-        
-        DO NOT include any additional text, explanations, or formatting.""".format(
-            discovery_type=discovery_type,
-            origin=origin,
-            track_attributes=json.dumps(track_attributes),
-            limit=limit
-        )
-    )
-    print("AI Response: ", response.text) # Print the AI's response
-    print("==================================================\n")
-    return response.text
-
-def id_to_element_name(element_id):
-    """
-    Convert a Spotify ID to a readable name, handling different types (track, playlist, album, artist)
-    Args:
-        element_id (str): Spotify ID of the element
-    Returns:
-        str: Formatted name of the element
-    """
-    try:
-        # First try as playlist
-        try:
-            element = sp.playlist(element_id)
-            return f"{element['name']} (playlist)"
-        except:
-            pass
-        
-        # Then try as track
-        try:
-            element = sp.track(element_id)
-            return f"{element['name']} (track) - {element['artists'][0]['name']}"
-        except:
-            pass
-        
-        # Then try as album
-        try:
-            element = sp.album(element_id)
-            return f"{element['name']} (album) - {element['artists'][0]['name']}"
-        except:
-            pass
-        
-        # Finally try as artist
-        try:
-            element = sp.artist(element_id)
-            return f"{element['name']} (artist)"
-        except:
-            pass
-            
-        raise Exception("Could not identify element type")
-        
-    except Exception as e:
-        print(f"Error getting element name: {e}")
-        return f"Unknown Element ({element_id})"
-
-def check_gemini_status():
-    """Check if Gemini API is properly configured and working"""
-    try:
-        # Test the model with a simple prompt
-        test_response = model.generate_content("Reply with 'OK' if you can read this.")
-        if test_response and test_response.text.strip() == "OK":
-            return True
-        else:
-            print("⚠️ Gemini API response is not as expected")
-            return False
-    except Exception as e:
-        print(f"❌ Gemini API Error: {e}")
-        return False
-
-def get_audio_db_info(artist_name, track_name):
-    """
-    Get track information from TheAudioDB API
-    Returns: dict with track information or None if not found
-    """
-    # TheAudioDB API endpoint
-    url = f"https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s={artist_name.strip().replace(" ", "%20")}&t={track_name.strip().replace(" ", "%20")}"
-    # print(f"audiodb API URL: {url}")  # Print the API URL for debugging
-    try:
-        response = requests.get(url)
-        # print(f"audiodb API Response: {response}")  # Print the API response status code
-        data = response.json()
-        # print(f"audiodb API Data: {data}")  # Print the API response data for debugging
-        
-        if not data['track'] or len(data['track']) == 0:
-            print(f"No data found for {track_name} by {artist_name}")
-            return None
-            
-        track = data['track'][0]
-        # print(f"Track data: {track["strMood"]}")  # Print the track data for debugging
-        return {
-            'idLyric': track.get('idLyric', None),
-            'intDuration': track.get('intDuration', None),
-            'strGenre': track.get('strGenre', None),
-            'strMood': track.get('strMood', None),
-            'strStyle': track.get('strStyle', None),
-            'strTheme': track.get('strTheme', None),
-            'intTotalPlays': track.get('intTotalPlays', None)
-        }
-        
-    except Exception as e:
-        print(f"Error getting track info: {e}")
-        return None
-
-def string_to_list(string):
-    """
-    Convert a comma-separated string to a list of song-artist pairs
-    Returns: List of strings, each formatted as 'song-artist'
-    """
-    # Split by comma and clean each entry
-    items = [item.strip() for item in string.split(',')]
-    
-    # Remove any empty strings and clean newlines
-    cleaned_items = [item.replace('\n', '') for item in items if item]
-    
-    # print("Converted list: ", cleaned_items)
-    return cleaned_items
-
 def process_track_recommendation(origin_name, discovery_type, limit):
     """
     Process a track and get AI recommendations based on its attributes
@@ -431,142 +681,7 @@ def process_track_recommendation(origin_name, discovery_type, limit):
     
     return recommendations
 
-class PlaylistManager:
-    def __init__(self, sp):
-        self.sp = sp
-        self.playlist = None
-
-    def create_playlist(self, username, playlist_name=None):
-        # playlist_description = PlaylistManager.get_playlist_description(discovery_type, origin_name, origin_type)
-        if playlist_name is None:
-            playlist_name = PlaylistManager.get_playlist_name()
-
-        self.playlist = self.sp.user_playlist_create(
-            user=username,
-            name=playlist_name,
-            public=False,
-            collaborative=False,
-            # description=playlist_description
-        )
-
-    def get_playlist_cover_image(playlist_id):
-        # TODO: get_playlist_cover_image
-        pass
-
-    def get_playlist_name():
-        """
-        Generate a playlist name based on the origin name and discovery type
-        Args:
-            origin_name (str): Name of the original track/playlist/album/artist
-            origin_type (str): Type of origin wanted
-            discovery_type (str): Type of discovery/recommendation wanted
-        Returns:
-            str: Generated playlist name
-        """
-        return input (f"Enter a name for the playlist: ") 
-
-    def get_playlist_description():
-        """
-        Generate a playlist description based on the discovery type and origin name
-        Args:
-            discovery_type (str): Type of discovery/recommendation wanted
-            origin_name (str): Name of the original track/playlist/album/artist
-        Returns:
-            str: Generated playlist description
-        """
-        return input (f"Enter a description for the playlist: ")
-
-    def process_playlist_recommendation(origin_name, recommendations):
-        pass
-
-    def change_playlist_name(self, old_name, new_name, is_default_playlist=False): # no need for is_default_playlist here, but maybe later
-        global default_playlist_name
-        # Get all user playlists and find the one to rename
-        if old_name == default_playlist_name:
-            default_playlist_name = new_name
-            # Update the cache with the new default playlist name
-            update_cache_data('default_playlist_name', new_name)
-            print(f"Warning Default playlist name changed from '{old_name}' to '{new_name}'")
-
-        all_playlists = sp.current_user_playlists()
-        for item in all_playlists['items']:
-            if item['name'] == old_name:
-                # Rename the playlist
-                sp.user_playlist_change_details(
-                    user=sp.me()['id'],
-                    playlist_id=item['id'],
-                    name=new_name,
-                    public=False,
-                    collaborative=False,
-                    description=item['description']
-                )
-                if is_default_playlist:
-                    print(f"Default playlist name changed from '{old_name}' to '{new_name}'")
-                else:
-                    print(f"Renamed playlist '{old_name}' to '{new_name}'")
-                return
-
-        print(f"Playlist '{old_name}' not found. No changes made.")
-
-    def find_user_playlist_id(self, playlist_name):
-        """Find a specific playlist ID owned by the current user"""
-        try:
-            # Get all user playlists
-            playlists = self.sp.current_user_playlists()
-            
-            # Search through user's playlists
-            for playlist in playlists['items']:
-                if playlist['name'] == playlist_name and playlist['owner']['id'] == self.sp.me()['id']:
-                    return playlist['id']
-            
-            print(f"❌ Playlist '{playlist_name}' not found in your library")
-            return None
-        except Exception as e:
-            print(f"❌ Error finding playlist: {e}")
-            return None
-
-    def fill_playlist(self, recommendations, playlist_id=None):
-        # get recommended track uris
-        recommended_track_ids = []
-        max_retries = 3  # Number of retries for each track
-        for rec in recommendations:
-            # Split the string into name and artist
-            # FIXME: not very redundant, but works for now
-            name, artist = [part.strip() for part in rec.rsplit('-', 1)]
-            # Get track info from TheAudioDB
-            for attempt in range(max_retries):
-                try:
-                    result = self.sp.search(
-                        q=f'track:{name} artist:{artist}',
-                        type='track',
-                        limit=1,
-                    )
-                    if result['tracks']['items']:
-                        track_uri = result['tracks']['items'][0]['uri']
-                        recommended_track_ids.append(track_uri)
-                        print(f"✅ Found track: {name} by {artist}")
-                        break  # Success, exit retry loop
-                    else:
-                        print(f"❌ Could not find track: {name} by {artist}")
-                        break  # No results, no need to retry
-                        
-                except requests.exceptions.Timeout:
-                    if attempt == max_retries - 1:
-                        print(f"⚠️ Timeout error after {max_retries} attempts: {name} by {artist}")
-                    else:
-                        print(f"⚠️ Attempt {attempt + 1} timed out, retrying...")
-                        continue
-                        
-                except Exception as e:
-                    print(f"❌ Error processing track: {e}")
-                    break
-        if recommended_track_ids:
-            # get the playlist id if given
-            if playlist_id:
-                self.sp.playlist_add_items(playlist_id, recommended_track_ids)
-            else:
-                # Add the recommended tracks to the playlist
-                self.sp.playlist_add_items(self.playlist['id'], recommended_track_ids)
+# 7. User Interface
 
 def what_to_do():
     # Create interactive prompts for user input
@@ -575,7 +690,7 @@ def what_to_do():
             message="What do you want to do?",
             choices=[
                 'new recommendations',
-                'add to liked songs', # TODO: implement if needed
+                # 'add to liked songs', # TODO: implement if needed
                 'settings',
                 'nothing'
             ]),
@@ -588,9 +703,9 @@ def what_to_do():
                 choices=[
                     'default playlist',
                     'create a new playlist',
-                    'override another old playlist', # TODO: implement this
-                    'add to existing playlist', # TODO
-                    'add to queue', # TODO
+                    # 'override another old playlist', # TODO: implement this
+                    # 'add to existing playlist', # TODO
+                    'add to queue',
                 ]),
         ]
         new_recs_answer = inquirer.prompt(new_recs_question)
@@ -600,26 +715,21 @@ def what_to_do():
                 return
             else: 
                 global default_playlist_id
-                if default_playlist_id is None and default_playlist_name is None: # if the default playlist id is not set, get it from the name
+                if default_playlist_id is None and default_playlist_name is None:
                     print("No default Playlist found. Please set one in the settings, or check Cache.")
                     return
-                default_playlist_id = playlist_manager.find_user_playlist_id(default_playlist_name)
-                old_tracks = [] # create a list to store the old tracks (to delete them later)
-                results = playlist_manager.sp.playlist_tracks(default_playlist_id) # get the tracks from the default playlist & put them in a list
-                for item in results['items']:
-                    if item['track']:
-                        old_tracks.append(item['track']['uri'])
-                while results['next']:
-                    results = playlist_manager.sp.next(results)
-                    for item in results['items']:
-                        if item['track']:
-                            old_tracks.append(item['track']['uri'])
-                playlist_manager.sp.playlist_replace_items(default_playlist_id, old_tracks) # remove the old tracks from the playlist
-                print(f"Removed {len(old_tracks)} old tracks from the default playlist: {default_playlist_name}")
+                # remove old tracks from the default playlist
+                playlist_manager.sp.playlist_replace_items(default_playlist_id, [])
+                print(f"Removed old tracks from the default playlist: {default_playlist_name}")
+                # start the basic process with the default playlist id
                 basic_process(default_playlist_id) # fill the playlist with the new recommendationsq
-        if new_recs_answer['new_recs'] == 'create a new playlist':
+        elif new_recs_answer['new_recs'] == 'create a new playlist':
             basic_process()
+        elif new_recs_answer['new_recs'] == 'add to queue':
+            add_to_queue()
+        
         return True # continue the loop
+    
     elif to_do_answer['what_to_do_choices'] == 'add to liked songs':
         print("NOT IMPLEMENTED YET")
         return True # continue the loop
@@ -683,8 +793,9 @@ def settings():
             if confirm['confirm'] == 'Yes, clear cache':
                 update_cache_data('default_playlist_name', None) # reset the default playlist name to None
                 update_cache_data('default_limit', 10) # reset the default limit to 10
+                update_cache_data('default_playlist_id', None) # reset the default playlist id to None
                 print("✅ Cache cleared successfully")
-                # FIXME: this is not working as expected, it should clear the whole cache file (cant do it with overwriting tho
+                # TODO: make it automatically reset all data not reset every single key singularly 
             else:
                 print("Cache clearing cancelled")
         elif advanced_settings_answer['advanced_settings'] == 'back':
@@ -724,10 +835,15 @@ def settings():
             update_cache_data('default_playlist_name', new_name) # update the cache with the new default playlist name
             print(f"New default playlist created: {new_name}")
         
-    elif basic_settings_answer['settings'] == 'change default playlist description':
-        new_description = input("Enter the new playlist description: ")
+        # get element id from name and save to cache
         global default_playlist_id
         default_playlist_id = playlist_manager.find_user_playlist_id(default_playlist_name) # get the playlist id from the name
+        update_cache_data('default_playlist_id', default_playlist_id) # update the cache with the new default playlist id
+        
+    elif basic_settings_answer['settings'] == 'change default playlist description':
+        new_description = input("Enter the new playlist description: ")
+        default_playlist_id = playlist_manager.find_user_playlist_id(default_playlist_name) # get the playlist id from the name
+        update_cache_data('default_playlist_id', default_playlist_id) # update the cache with the new default playlist id
         if default_playlist_id is None:
             print("Cannot update description: Playlist not found")
             return
@@ -747,7 +863,7 @@ def settings():
     elif basic_settings_answer['settings'] == 'change playlist name':
         old_name = input("Enter the old playlist name: ")
         new_name = input("Enter the new playlist name: ")
-        playlist_manager.change_playlist_name(old_name, new_name) # TODO: implement this function      
+        playlist_manager.change_playlist_name(old_name, new_name) 
     
     elif basic_settings_answer['settings'] == 'change default limit for recommendations':
         new_limit = input("Enter the new default limit for recommendations: ")
@@ -765,14 +881,18 @@ def settings():
 def basic_process(playlist_id=None): 
     global discovery_type
     discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
+    if "recommendations based on the time of day" in discovery_type or "decade specific music" in discovery_type or "new releases" in discovery_type or "top charts" in discovery_type:
+        print("Discovery type: ", discovery_type) # print the discovery type for debugging
+        print("this mode is not yet fully functional")
+        return
     origin_id = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
     origin_name = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
     if playlist_id is None:
         # destination_playlist_name = input("Enter a name for the new playlist: ") # ask for a name for the new playlist
+        print("playlist id is None")
         pass
     elif playlist_id is not None: # lol idk why (when id is given)
         print(f"discovered playlist id input ({playlist_id})")
-        
 
     if is_track: # if a track was selected
         recommendations = process_track_recommendation(origin_name, discovery_type, limit=default_limit) # get recommendations based on the track, discovery type and limit -> returns list of strings (song-artist pairs)
@@ -784,66 +904,45 @@ def basic_process(playlist_id=None):
         # Create the playlist if not already created
         if playlist_id is None:
             playlist_manager.create_playlist(sp.me()['id'])
-            # FIXME: der filled doch garnicht??? -> muss glaube noch fill_playlist aufgerufen werden
+            playlist_manager.fill_playlist(recommendations) # fill the playlist with the recommendations
         else:
             playlist_manager.fill_playlist(recommendations, playlist_id) # fill the playlist with the recommendations
 
-def update_cache_data(key, value):
-    """Update a specific key in the cache file while preserving other data"""
-    try:
-        # Read existing cache data
-        cache_data = {}
+def add_to_queue():
+    print("Adding to queue... \n")
+    global discovery_type
+    discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
+
+    origin_id = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
+    origin_name = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
+
+    recommendations = process_track_recommendation(origin_name, discovery_type, limit=default_limit) # get recommendations based on the track, discovery type and limit -> returns list of strings (song-artist pairs)
+    
+    print(f"🎵 Found {len(recommendations)} recommendations:")
+    for i, rec in enumerate(recommendations, 1):
+        print(f"{i}. {rec}")
+        track, artist = [part.strip() for part in rec.rsplit('-', 1)]
+        track_id = element_name_to_id(track.strip(), "track") # get the track id from the name
         try:
-            with open('.cache', 'r') as cache:
-                cache_data = json.load(cache)
-        except (FileNotFoundError, json.JSONDecodeError):
-            # File doesn't exist or is empty/invalid
-            pass
-
-        # Update the specific key
-        cache_data[key] = value
-
-        # Write back all data
-        with open('.cache', 'w') as cache:
-            json.dump(cache_data, cache)
-            
-        return True
-    except Exception as e:
-        print(f"❌ Error updating cache: {e}")
-        return False
+            sp.add_to_queue(track_id, None) # add the track to the queue device_id=None (None = current device) see docs
+        except Exception as e:
+            print(f"Error adding to queue: {e}")
+            continue
+        
+    print("")  # print a new line for better readability
 
 
-# ======================================================================
-# Main program starts here
+# ================================Main program starts here======================================
 
 global default_limit
-if os.path.exists('.cache'):
-    with open('.cache', 'r') as cache:
-        cache_data = json.load(cache)
-        default_limit = cache_data.get('default_limit', None)
-else: default_limit = None # read the default playlist name from the cache (if it exists)
-
+global default_playlist_name
+global default_playlist_id
 global playlist_manager
 playlist_manager = PlaylistManager(sp)
 
-global default_playlist_name
-global default_playlist_id
-
-if os.path.exists('.cache'):
-    with open('.cache', 'r') as cache:
-        cache_data = json.load(cache)
-        default_playlist_name = cache_data.get('default_playlist_name', None)
-        default_playlist_id = cache_data.get('default_playlist_id', None)
-        if default_playlist_name is not None:
-            if default_playlist_id is not playlist_manager.find_user_playlist_id(default_playlist_name):
-                print(f"Default playlist name '{default_playlist_name}' does not match the ID '{default_playlist_id}'. Please check your cache.")
-                print("default playlist id: ", default_playlist_id)
-                print("default playlist name: ", default_playlist_name)
-                print("playlist id from name: ", playlist_manager.find_user_playlist_id(default_playlist_name))
-else: 
-    default_playlist_name = None # read the default playlist name from the cache (if it exists)
-    print("No cache file found. Please set one ('.cache') to save the default playlist name.")
-
+initialize_spotify_client()
+initialize_gemini_client()
+load_cache_data() # Load cache data (default playlist name, id and default limit)
 
 while what_to_do():
     pass
@@ -851,15 +950,18 @@ while what_to_do():
 
 '''
 TODO:
+- ask user if he wants to overwrite old songs in default playlist (or add them to the end)
+- refine recommendations (more specific)
+- add a function to get the playlist cover image (if available)
+- database is not really uptodate (maybe use a different one?)
+- maybe dont ask gemini for recommendations, but look in database with same tag (could be a bit unspecific tho)
+
+Finished:
 - save default playlist name in cache (or in a different file) so it can be used later x
 - when creating new default playlist/overriding automatically set default_playlist_name and default_playlist_id x
 - add a function to create a playlist with the recommendations x
 - add a function to add the recommendations to the playlist x
-- refine recommendations (more specific)
-- add posibility to add to queue
-- database is not really uptodate (maybe use a different one?)
-- add a function to get the playlist cover image (if available)
-- maybe dont ask gemini for recommendations, but look in database with same tag (could be a bit unspecific tho)
+- add posibility to add to queue x
 '''
 
 # SEARCHING: https://developer.spotify.com/documentation/web-api/reference/search
