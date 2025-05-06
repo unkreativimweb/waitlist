@@ -9,6 +9,7 @@ import google.generativeai as genai
 import requests
 import json
 import genius_auth
+from bs4 import BeautifulSoup
 
 
 # 1. Environment setup
@@ -66,7 +67,9 @@ def initialize_genius_client():
 
         # Get the authorization info & code from the callback server
         genius_token_info = genius_auth.main()
-        authorization_code = genius_token_info['code']
+        print(f"Genius token info: {genius_token_info}") # Print the token info for debugging
+        return
+        # authorization_code = genius_token_info['code']
 
     except Exception as e:
         print(f"❌ Error initializing Genius client: {e}")
@@ -319,6 +322,155 @@ def get_lyrics_genius(artist_name, track_name):
     Get lyrics from Genius API
     Returns: Lyrics as a string or None if not found
     """
+    # Load token from cache
+    with open('cache.json', 'r') as f:
+        cache_data = json.load(f)
+        access_token = cache_data.get('genius_token', {}).get('access_token')
+    
+    if not access_token:
+        print("❌ No Genius access token found in cache")
+        return None
+
+    # Configure headers with Bearer token
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    track_id = get_genius_track_id(artist_name, track_name) # get the song id from genius
+    track_url = f"https://api.genius.com/songs/{track_id}" # get the song url from genius
+    data = requests.get(track_url, headers=headers).json() # get the song data from genius
+    # print(data) # print the song data
+    lyrics_url = data['response']['song']['url'] # get the lyrics url from genius
+    
+     # Get the actual lyrics by scraping the page
+    page = requests.get(lyrics_url)
+    print(f"Scraping lyrics from: {lyrics_url}")
+    soup = BeautifulSoup(page.content, 'html.parser')
+    
+    # Find lyrics container and extract text
+    lyrics_div = soup.find('div', class_='Lyrics__Container-sc-78fb6627-1 hiRbsH')
+    if lyrics_div:
+        # Remove script tags and clean up the text
+        [s.extract() for s in lyrics_div(['script', 'style'])]
+        lyrics = lyrics_div.get_text()
+        lyrics = lyrics.split('[')[1:] # remove irrelevant stuff from beautifulsoup scraping
+        # print("Lyrics found:")
+        # print(lyrics)
+        return lyrics
+    else:
+        print("❌ Could not extract lyrics from page")
+
+def get_genius_track_id(artist_name, track_name):
+    try:
+        # Load token from cache
+        with open('cache.json', 'r') as f:
+            cache_data = json.load(f)
+            access_token = cache_data.get('genius_token', {}).get('access_token')
+        
+        if not access_token:
+            print("❌ No Genius access token found in cache")
+            return None
+
+        # Configure headers with Bearer token
+        headers = {
+            'Authorization': f'Bearer {access_token}'
+        }
+
+        # URL encode the search parameters
+        search_query = f"{artist_name} {track_name}".replace(" ", "%20")
+        url = f'https://api.genius.com/search?q={search_query}'
+
+        # Make authenticated request
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"❌ API request failed with status code: {response.status_code}")
+            return None
+
+        data = response.json()
+        hits = data.get('response', {}).get('hits', [])
+        
+        if hits:
+            print("✅ API request successful!")
+            print(hits[0].get('result', {}).get('id'))
+            return hits[0].get('result', {}).get('id')
+        else:
+            print("❌ No results found")
+            return None
+
+    except Exception as e:
+        print(f"❌ Error accessing Genius API: {e}")
+        return None
+
+def get_lyric_attributes_ai(lyrics):
+    """
+    Get lyric attributes from the lyrics text with ai
+    Returns: dict with lyric attributes or None if not found
+    """
+    print("Getting lyric attributes from AI...")
+    
+    try:
+        with open('lyric_attributes.json', 'r') as l:
+            lyric_attributes = json.load(l)
+
+
+        text = f"""You are a music analysis engine. Your task is to analyze the following lyrics and extract their attributes:
+
+                Input Parameters:
+                - Lyrics: {lyrics} (the text of the song's lyrics)
+                
+                Response Format:
+                - Return a JSON object with attributes from this schema: {lyric_attributes}
+                - Ensure the response is valid JSON format, use " instead of '
+                - DO NOT include markdown code block markers
+                
+                Error Handling:
+                - If logical error: return "ERROR: Invalid input combination"
+                - If missing data: return "ERROR: Cannot access required data"
+                - For any other error: return "ERROR: [specific error message]"
+                
+                DO NOT include any additional text, explanations, or formatting."""
+
+        # Send the lyrics to the AI model for analysis
+        response = model.generate_content(text)
+        
+        # Print raw response for debugging
+        # print("\nRaw AI Response:")
+        # print(response.text.strip())
+        # print("\n-------------------")
+
+        # Clean the response by removing markdown code block markers
+        cleaned_response = response.text.strip()
+        cleaned_response = cleaned_response.replace("```json", "").replace("```", "").strip()
+        
+        # print("Cleaned Response:")
+        # print(cleaned_response)
+        # print("\n-------------------")
+        
+        if "ERROR:" in cleaned_response:
+            print("AI Error: ", cleaned_response)
+            return None
+            
+        try:
+            # was for debugging
+            # with open ("test.json", "w") as test:
+            #     test.write(cleaned_response)
+                
+            # Try to parse the cleaned response as JSON
+            parsed_response = json.loads(cleaned_response)
+            return parsed_response
+        except json.JSONDecodeError as je:
+            import sys
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            print(f"JSON parsing error at line {exc_traceback.tb_lineno}: {je}")
+            print("Response was not valid JSON format")
+            return None
+            
+    except Exception as e:
+        import sys
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        print(f"Error in lyric analysis at line {exc_traceback.tb_lineno}: {e}")
+        return None
 
 # 5. Playlist Management
 
@@ -793,7 +945,8 @@ def settings():
                 'change Gemini API key',
                 'clear authentication (resetting Spotify token)',
                 'clear cache (not Spotify token)',
-                # 'toggle debug mode', TODO: implement debug mod
+                # 'toggle debug mode', TODO: implement debug mode
+                'output cache data',
                 'back'
             ]),
     ]
@@ -825,6 +978,13 @@ def settings():
                 # TODO: make it automatically reset all data not reset every single key singularly 
             else:
                 print("Cache clearing cancelled")
+        elif advanced_settings_answer['advanced_settings'] == 'output cache data':
+            try:
+                with open('cache.json', 'r') as cache:
+                    cache_data = json.load(cache)
+                    print("Cache data: ", cache_data)
+            except FileNotFoundError:
+                print("Cache file not found.")
         elif advanced_settings_answer['advanced_settings'] == 'back':
             settings()
     elif basic_settings_answer['settings'] == 'set/change default playlist':
@@ -965,19 +1125,28 @@ global default_limit
 global default_playlist_name
 global default_playlist_id
 global playlist_manager
-playlist_manager = PlaylistManager(sp)
+global sp
 
 initialize_spotify_client()
 initialize_gemini_client()
 initialize_genius_client()
 load_cache_data() # Load cache data (default playlist name, id and default limit)
 
+playlist_manager = PlaylistManager(sp)
+
 while what_to_do():
     pass
 
+# lyrics = get_lyrics_genius("Travis Scott" , "FE!N")
+# attributes = get_lyric_attributes_ai(lyrics) # test the AI function
+# print(attributes)
+
+
+# ================================End of main program========================================
 
 '''
 TODO:
+- make advanced settings extra function
 - ask user if he wants to overwrite old songs in default playlist (or add them to the end)
 - refine recommendations (more specific)
 - add a function to get the playlist cover image (if available)

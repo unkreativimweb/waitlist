@@ -1,0 +1,46 @@
+{
+    "lyrics_attributes": {
+        "semantic": {
+            "word_categories": {
+                "emotion_words": [],
+                "time_references": ["today", "tomorrow", "never", "forever", "always"],
+                "nature_elements": ["sun", "rain", "storm", "wind", "sky", "stars"],
+                "body_references": ["heart", "eyes", "hands", "soul", "mind"],
+                "action_verbs": ["run", "dance", "cry", "laugh", "scream", "sing"]
+            },
+            "themes": {
+                "relationships": ["love", "friendship", "breakup", "family", "betrayal"],
+                "personal_states": ["loneliness", "happiness", "depression", "anxiety", "hope"],
+                "life_events": ["loss", "success", "change", "growth", "birth", "death"],
+                "social_issues": ["injustice", "freedom", "peace", "war", "equality"]
+            }
+        },
+        "musical": {
+            "tempo_indicators": {
+                "slow_terms": ["slow", "steady", "gentle"],
+                "medium_terms": ["walking", "moderate", "flowing"],
+                "fast_terms": ["quick", "rapid", "rushing"]
+            },
+            "tone": {
+                "dark": ["minor", "diminished", "dissonant"],
+                "light": ["major", "bright", "harmonic"]
+            },
+            "dynamics": {
+                "soft": ["quiet", "whisper", "gentle"],
+                "loud": ["shout", "scream", "blast"]
+            }
+        },
+        "structure": {
+            "repetition": {
+                "has_chorus": "false",
+                "repeated_phrases": [],
+                "emphasis_words": []
+            },
+            "narrative": {
+                "perspective": ["first_person", "second_person", "third_person"],
+                "tense": ["past", "present", "future"],
+                "story_arc": ["beginning", "conflict", "resolution"]
+            }
+        }
+    }
+}
