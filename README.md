@@ -8,6 +8,7 @@ This project is not hosted - you'll need to create your own Spotify Developer ap
 coming soon...
 
 ## Flowchart
+[waitlist.mermaid](waitlist.mermaid)
 ```mermaid
 ---
 id: 992c9263-f454-4cd3-b500-30659d0e586b
