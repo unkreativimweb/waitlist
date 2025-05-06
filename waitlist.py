@@ -8,6 +8,7 @@ from datetime import datetime, date
 import google.generativeai as genai
 import requests
 import json
+import genius_auth
 
 
 # 1. Environment setup
@@ -19,11 +20,14 @@ def load_env_variables():
     SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
     REDIRECT_URI = os.getenv("REDIRECT_URI") 
     GOOGLE_API_KEY = os.getenv('gemini_api_key')
-    return SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY
+    GENIUS_CLIENT_ID = os.getenv('GENIUS_CLIENT_ID')
+    GENIUS_CLIENT_SECRET = os.getenv('GENIUS_CLIENT_SECRET')
+    GENIUS_REDIRECT_URI = os.getenv('GENIUS_REDIRECT_URI')
+    return SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY, GENIUS_CLIENT_ID, GENIUS_CLIENT_SECRET, GENIUS_REDIRECT_URI
 
 def initialize_spotify_client():
     """Initialize the Spotify client with credentials"""
-    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, _ = load_env_variables()
+    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, *_ = load_env_variables()
     
     # Initialize the Spotify client
     client_credentials_manager = SpotifyClientCredentials(
@@ -45,10 +49,28 @@ def initialize_spotify_client():
 
 def initialize_gemini_client():
     # Configure Gemini API
-    *_, GOOGLE_API_KEY = load_env_variables()  # Use asterisk to unpack and ignore other values
+    # TODO: WARNING: THE REDIRECT URI IS USED BY TWO DIFFERENT CLIENTS (SPOTIFY AND GENIUS)
+    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY, *_ = load_env_variables() # TODO: dont load all variables
     genai.configure(api_key=GOOGLE_API_KEY) # use configure instead of client
     global model
     model = genai.GenerativeModel('gemini-1.5-flash') #specify the model
+
+def initialize_genius_client():
+    try: 
+        # Get vars from env
+        SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY, GENIUS_CLIENT_ID, GENIUS_CLIENT_SECRET, GENIUS_REDIRECT_URI = load_env_variables()
+        print(f"Genius client id: {GENIUS_CLIENT_ID}; Genius client secret: {GENIUS_CLIENT_SECRET}") 
+        # TODO: WARNING: THE REDIRECT URI IS USED BY TWO DIFFERENT CLIENTS (SPOTIFY AND GENIUS)
+        AUTH_URL = "https://api.genius.com/oauth/authorize"
+        TOKEN_URL = "https://api.genius.com/oauth/token"
+
+        # Get the authorization info & code from the callback server
+        genius_token_info = genius_auth.main()
+        authorization_code = genius_token_info['code']
+
+    except Exception as e:
+        print(f"❌ Error initializing Genius client: {e}")
+        return None
 
 # 2. Cache Management
 
@@ -58,7 +80,7 @@ def update_cache_data(key, value):
         # Read existing cache data
         cache_data = {}
         try:
-            with open('.cache', 'r') as cache:
+            with open('cache.json', 'r') as cache:
                 cache_data = json.load(cache)
         except (FileNotFoundError, json.JSONDecodeError):
             # File doesn't exist or is empty/invalid
@@ -68,7 +90,7 @@ def update_cache_data(key, value):
         cache_data[key] = value
 
         # Write back all data
-        with open('.cache', 'w') as cache:
+        with open('cache.json', 'w') as cache:
             json.dump(cache_data, cache)
             
         return True
@@ -80,14 +102,14 @@ def load_cache_data():
     """Load cache data from the cache file"""
     global default_limit, default_playlist_name, default_playlist_id
 
-    if os.path.exists('.cache'):
-        with open('.cache', 'r') as cache:
+    if os.path.exists('cache.json'):
+        with open('cache.json', 'r') as cache:
             cache_data = json.load(cache)
             default_limit = cache_data.get('default_limit', None)
     else: default_limit = None # read the default playlist name from the cache (if it exists)
     
-    if os.path.exists('.cache'):
-        with open('.cache', 'r') as cache:
+    if os.path.exists('cache.json'):
+        with open('cache.json', 'r') as cache:
             cache_data = json.load(cache)
             default_playlist_name = cache_data.get('default_playlist_name', None)
             default_playlist_id = cache_data.get('default_playlist_id', None)
@@ -101,9 +123,8 @@ def load_cache_data():
                 print("cache matches")
     else: 
         default_playlist_name = None # read the default playlist name from the cache (if it exists)
-        print("No cache file found. Please set one ('.cache') to save the default playlist name.")
+        print("No cache file found. Please set one ('cache.json') to save the default playlist name.")
     
-
 # 3. Utility Functions
 
 def string_to_list(string):
@@ -213,7 +234,7 @@ def element_name_to_id(element_name, element_type):
     except Exception as e:
         print(f"Error converting name to ID: {e}")
         return None
-
+    
 # 4. External API Calls
 
 def ask_ai(discovery_type, origin, limit, track_attributes):
@@ -292,6 +313,12 @@ def get_audio_db_info(artist_name, track_name):
     except Exception as e:
         print(f"Error getting track info: {e}")
         return None
+
+def get_lyrics_genius(artist_name, track_name):
+    """
+    Get lyrics from Genius API
+    Returns: Lyrics as a string or None if not found
+    """
 
 # 5. Playlist Management
 
@@ -942,6 +969,7 @@ playlist_manager = PlaylistManager(sp)
 
 initialize_spotify_client()
 initialize_gemini_client()
+initialize_genius_client()
 load_cache_data() # Load cache data (default playlist name, id and default limit)
 
 while what_to_do():

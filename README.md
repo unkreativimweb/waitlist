@@ -30,7 +30,7 @@ pip install spotipy inquirer python-dotenv
 
 3. **Set up your environment:**
    - Create a `.env` file in the project root
-   - Create a `.cache` file in the project root
+   - Create a `cache.json` file in the project root
    - Add your Spotify API credentials:
 ```env
 SPOTIFY_CLIENT_ID=your_client_id_here

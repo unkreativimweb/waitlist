@@ -1,0 +1,26 @@
+flowchart TD
+    A[Start Programm] --> B{Token-Datei vorhanden?}
+    B -->|Ja| C[Lade Token aus Datei]
+    B -->|Nein| D[Starte Autorisierungsablauf]
+    
+    D --> E[Öffne Browser mit Genius Auth URL]
+    E --> F[Starte lokalen Webserver auf Port 8080]
+    F --> G[Warte auf Callback mit Auth Code]
+    G --> H[Empfange Authorization Code]
+    H --> I[Tausche Code gegen Access Token]
+    
+    I --> J{Token erfolgreich erhalten?}
+    J -->|Ja| K[Speichere Token in Datei]
+    J -->|Nein| L[Zeige Fehlermeldung]
+    L --> Z[Ende mit Fehler]
+    
+    C --> M[Extrahiere Access Token]
+    K --> M
+    
+    M --> N[Teste API mit Accountabfrage]
+    N --> O{API Test erfolgreich?}
+    O -->|Ja| P[Zeige Benutzername und Erfolg]
+    O -->|Nein| Q[Zeige API Fehler]
+    
+    P --> Z1[Ende mit Erfolg]
+    Q --> Z2[Ende mit Fehler]
