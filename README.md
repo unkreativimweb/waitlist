@@ -8,7 +8,6 @@ This project is not hosted - you'll need to create your own Spotify Developer ap
 coming soon...
 
 ## Flowchart
-[waitlist.mermaid](waitlist.mermaid)
 ```mermaid
 ---
 id: 992c9263-f454-4cd3-b500-30659d0e586b
@@ -163,6 +162,7 @@ flowchart TD
     title[Waitlist.py Flowchart - Enhanced Spotify Recommendation System]:::title
     classDef title fill:none,stroke:none,color:#333,font-size:18px,font-weight:bold
 ```
+also find the flowchart in [waitlist.mermaid](waitlist.mermaid)
 
 ## 🚀 Getting Started
 ### Prerequisites
@@ -233,4 +233,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE.md) f
 - [Python-dotenv](https://github.com/theskumar/python-dotenv) - Manages API credentials securely by loading them from a local `.env` file, keeping sensitive Spotify and Gemini API keys separate from the code.
 - [TheAudioDB](https://www.theaudiodb.com/free_music_api) - Enriches track recommendations by providing additional metadata like genres, moods, and themes that aren't available through Spotify's API. Helps create more accurate music suggestions.
 - [Gemini](https://aistudio.google.com/) - Powers the intelligent recommendation system by analyzing track characteristics and user preferences to generate personalized music suggestions based on various criteria like mood, genre, or similar artists.
-- soon: [Genius](https://docs.genius.com) - Will add lyrical analysis capabilities to enhance music recommendations by considering song themes and meanings.
+- [Genius](https://docs.genius.com) - Adds lyrical analysis capabilities to enhance music recommendations by considering song themes and meanings.
+- [Mermaid](https://mermaid.js.org) - For visualisation purposes

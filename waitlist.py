@@ -11,6 +11,18 @@ import json
 import genius_auth
 from bs4 import BeautifulSoup
 
+# for http logging
+# import logging
+# try:
+#     import http.client as http_client
+# except ImportError:
+#     import httplib as http_client
+# http_client.HTTPConnection.debuglevel = 1
+# logging.basicConfig()
+# logging.getLogger().setLevel(logging.DEBUG)
+# requests_log = logging.getLogger("requests.packages.urllib3")
+# requests_log.setLevel(logging.DEBUG)
+# requests_log.propagate = True
 
 # 1. Environment setup
 
@@ -19,19 +31,19 @@ def load_env_variables():
     dotenv.load_dotenv()
     SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
     SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-    REDIRECT_URI = os.getenv("REDIRECT_URI") 
+    SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI") 
     GOOGLE_API_KEY = os.getenv('gemini_api_key')
     GENIUS_CLIENT_ID = os.getenv('GENIUS_CLIENT_ID')
     GENIUS_CLIENT_SECRET = os.getenv('GENIUS_CLIENT_SECRET')
     GENIUS_REDIRECT_URI = os.getenv('GENIUS_REDIRECT_URI')
-    return SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY, GENIUS_CLIENT_ID, GENIUS_CLIENT_SECRET, GENIUS_REDIRECT_URI
+    return SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, GOOGLE_API_KEY, GENIUS_CLIENT_ID, GENIUS_CLIENT_SECRET, GENIUS_REDIRECT_URI
 
 def initialize_spotify_client():
     """Initialize the Spotify client with credentials"""
-    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, *_ = load_env_variables()
+    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, *_ = load_env_variables()
     
     # Initialize the Spotify client
-    client_credentials_manager = SpotifyClientCredentials(
+    auth_manager = SpotifyClientCredentials(
         client_id=SPOTIFY_CLIENT_ID,
         client_secret=SPOTIFY_CLIENT_SECRET
     )
@@ -41,25 +53,25 @@ def initialize_spotify_client():
     sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
         client_id=SPOTIFY_CLIENT_ID,
         client_secret=SPOTIFY_CLIENT_SECRET,
-        redirect_uri=REDIRECT_URI,
+        redirect_uri=SPOTIFY_REDIRECT_URI,
         scope="playlist-read-private playlist-read-collaborative user-library-read playlist-modify-public playlist-modify-private user-modify-playback-state",  # Added user-modify-playback-state
         cache_path=".spotify_cache"
     ))
-    
     return sp
 
 def initialize_gemini_client():
     # Configure Gemini API
     # TODO: WARNING: THE REDIRECT URI IS USED BY TWO DIFFERENT CLIENTS (SPOTIFY AND GENIUS)
-    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY, *_ = load_env_variables() # TODO: dont load all variables
+    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, GOOGLE_API_KEY, *_ = load_env_variables() # TODO: dont load all variables
     genai.configure(api_key=GOOGLE_API_KEY) # use configure instead of client
     global model
-    model = genai.GenerativeModel('gemini-1.5-flash') #specify the model
+    model = genai.GenerativeModel('gemini-2.0-flash-lite') #specify the model
+    return model
 
 def initialize_genius_client():
     try: 
         # Get vars from env
-        SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI, GOOGLE_API_KEY, GENIUS_CLIENT_ID, GENIUS_CLIENT_SECRET, GENIUS_REDIRECT_URI = load_env_variables()
+        SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, GOOGLE_API_KEY, GENIUS_CLIENT_ID, GENIUS_CLIENT_SECRET, GENIUS_REDIRECT_URI = load_env_variables()
         print(f"Genius client id: {GENIUS_CLIENT_ID}; Genius client secret: {GENIUS_CLIENT_SECRET}") 
         # TODO: WARNING: THE REDIRECT URI IS USED BY TWO DIFFERENT CLIENTS (SPOTIFY AND GENIUS)
         AUTH_URL = "https://api.genius.com/oauth/authorize"
@@ -240,7 +252,7 @@ def element_name_to_id(element_name, element_type):
     
 # 4. External API Calls
 
-def ask_ai(discovery_type, origin, limit, track_attributes):
+def ask_ai(discovery_type, origin, limit, track_attributes, lyric_attributes):
     '''
     This function sends a request to the AI model for music recommendations based on the provided parameters.
     It includes error handling for various scenarios and formats the response accordingly.
@@ -254,13 +266,13 @@ def ask_ai(discovery_type, origin, limit, track_attributes):
     print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
     print('Limit: ', limit) # Print the limit (number of recommendations)
     track_attributes = json.dumps(track_attributes) # Convert track attributes to JSON string for AI input
-    response = model.generate_content(
-        """You are a music recommendation engine. Your task is to recommend music based on the following criteria:
+    text = """You are a music recommendation engine. Your task is to recommend music based on the following criteria:
 
         Input Parameters:
-        - Discovery Type: {discovery_type} (defines what kind of music to recommend)
+        - Discovery Type: {discovery_type} (defines what kind of music to recommend) => MAKE SURE TO FOLLOW THIS INSTRUCTION 100%
         - Origin: {origin} (the reference point for recommendations)
         - Track Attributes: {track_attributes} (musical characteristics to consider)
+        - Lyric Attributes: {lyric_attributes} (focus mainly on this)
         
         Response Rules:
         1. Output Format: ONLY return a comma-separated list of 'song-artist' pairs
@@ -276,9 +288,11 @@ def ask_ai(discovery_type, origin, limit, track_attributes):
             discovery_type=discovery_type,
             origin=origin,
             track_attributes=json.dumps(track_attributes),
-            limit=limit
+            limit=limit,
+            lyric_attributes=lyric_attributes
         )
-    )
+    response = model.generate_content(text)
+    # print("AI Input: ", text)
     print("AI Response: ", response.text) # Print the AI's response
     print("==================================================\n")
     return response.text
@@ -321,6 +335,8 @@ def get_lyrics_genius(artist_name, track_name):
     """
     Get lyrics from Genius API
     Returns: Lyrics as a string or None if not found
+    FIXME: IS THIS VAI API OR BS4???????
+    FIXME: ALSO: WHY THE FUCK IS IT SEARCHING FOR THE WRONG TRACKS (SEE CELO ABDI 20 ZOLL MAE)
     """
     # Load token from cache
     with open('cache.json', 'r') as f:
@@ -342,13 +358,13 @@ def get_lyrics_genius(artist_name, track_name):
     # print(data) # print the song data
     lyrics_url = data['response']['song']['url'] # get the lyrics url from genius
     
-     # Get the actual lyrics by scraping the page
+    # Get the actual lyrics by scraping the page
     page = requests.get(lyrics_url)
     print(f"Scraping lyrics from: {lyrics_url}")
     soup = BeautifulSoup(page.content, 'html.parser')
     
     # Find lyrics container and extract text
-    lyrics_div = soup.find('div', class_='Lyrics__Container-sc-78fb6627-1 hiRbsH')
+    lyrics_div = soup.find('div', class_='bjajog')
     if lyrics_div:
         # Remove script tags and clean up the text
         [s.extract() for s in lyrics_div(['script', 'style'])]
@@ -379,7 +395,10 @@ def get_genius_track_id(artist_name, track_name):
         # URL encode the search parameters
         search_query = f"{artist_name} {track_name}".replace(" ", "%20")
         url = f'https://api.genius.com/search?q={search_query}'
-
+        # for debugging
+        print(f"search url for genius lyrics api: {url + search_query}")
+        print("Request params:", params if 'params' in locals() else None)
+        print("Request data:", data if 'data' in locals() else None)
         # Make authenticated request
         response = requests.get(url, headers=headers)
         
@@ -848,8 +867,16 @@ def process_track_recommendation(origin_name, discovery_type, limit):
     # Get additional track information from TheAudioDB
     track_attributes = get_audio_db_info(track_name, artist_name)
     
+    # Get lyric-attributes
+    lyrics = get_lyrics_genius(artist_name, track_name)
+    lyric_attributes = get_lyric_attributes_ai(lyrics) 
+    # print(lyric_attributes)
+
+    # TODO: filter lyrics attributes out of json, so theres not as much irrelevant info passed onto gemini
+    # ^ may be redundant, if database is used, instead of ai
+
     # Get AI recommendations
-    ai_response = ask_ai(discovery_type, origin_name, limit, track_attributes)
+    ai_response = ask_ai(discovery_type, origin_name, limit, track_attributes, lyric_attributes)
     
     # Convert AI response to list of recommendations
     recommendations = string_to_list(str(ai_response))
@@ -1075,7 +1102,6 @@ def basic_process(playlist_id=None):
     origin_id = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
     origin_name = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
     if playlist_id is None:
-        # destination_playlist_name = input("Enter a name for the new playlist: ") # ask for a name for the new playlist
         print("playlist id is None")
         pass
     elif playlist_id is not None: # lol idk why (when id is given)
@@ -1121,26 +1147,22 @@ def add_to_queue():
 
 # ================================Main program starts here======================================
 
-global default_limit
-global default_playlist_name
-global default_playlist_id
-global playlist_manager
-global sp
+if __name__ == "__main__":
+    global default_limit
+    global default_playlist_name
+    global default_playlist_id
+    global playlist_manager
+    global sp
 
-initialize_spotify_client()
-initialize_gemini_client()
-initialize_genius_client()
-load_cache_data() # Load cache data (default playlist name, id and default limit)
+    initialize_spotify_client()
+    initialize_gemini_client()
+    initialize_genius_client()
+    load_cache_data()
 
-playlist_manager = PlaylistManager(sp)
+    playlist_manager = PlaylistManager(sp)
 
-while what_to_do():
-    pass
-
-# lyrics = get_lyrics_genius("Travis Scott" , "FE!N")
-# attributes = get_lyric_attributes_ai(lyrics) # test the AI function
-# print(attributes)
-
+    while what_to_do():
+        pass
 
 # ================================End of main program========================================
 
@@ -1162,3 +1184,24 @@ Finished:
 '''
 
 # SEARCHING: https://developer.spotify.com/documentation/web-api/reference/search
+'''
+recommendations(seed_artists=None, seed_genres=None, seed_tracks=None, limit=20, country=None, **kwargs)
+Get a list of recommended tracks for one to five seeds. (at least one of seed_artists, seed_tracks and seed_genres are needed)
+
+Parameters:
+seed_artists - a list of artist IDs, URIs or URLs
+
+seed_tracks - a list of track IDs, URIs or URLs
+
+seed_genres - a list of genre names. Available genres for
+recommendations can be found by calling recommendation_genre_seeds
+
+country - An ISO 3166-1 alpha-2 country code. If provided,
+all results will be playable in this country.
+
+limit - The maximum number of items to return. Default: 20.
+Minimum: 1. Maximum: 100
+
+min/max/target_<attribute> - For the tuneable track
+attributes listed in the documentation, these values provide filters and targeting on results.
+'''
