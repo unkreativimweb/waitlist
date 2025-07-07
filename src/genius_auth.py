@@ -107,7 +107,7 @@ def save_token_to_file(token_info):
         # Load existing cache data
         cache_data = {}
         try:
-            with open('cache.json', 'r') as f:
+            with open('data/prod/cache.json', 'r') as f:
                 cache_data = json.load(f)
         except FileNotFoundError:
             pass
@@ -116,7 +116,7 @@ def save_token_to_file(token_info):
         cache_data['genius_token'] = token_info
 
         # Write back to cache
-        with open('cache.json', 'w') as f:
+        with open('data/prod/cache.json', 'w') as f:
             json.dump(cache_data, f)
         print("✅ Token saved to cache.json")
         return True
@@ -127,7 +127,7 @@ def save_token_to_file(token_info):
 def load_token_from_file():
     """Load token information from cache.json file"""
     try:
-        with open('cache.json', 'r') as f:
+        with open('data/prod/cache.json', 'r') as f:
             cache_data = json.load(f)
             return cache_data.get('genius_token')
     except FileNotFoundError:
