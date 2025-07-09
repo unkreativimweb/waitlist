@@ -36,7 +36,7 @@ class PlaylistManager:
         """
         Generate a playlist name based on the origin name and discovery type
         Args:
-            origin_name (str): Name of the original track/playlist/album/artist
+            origin (dict): Information about the original track/playlist/album/artist
             origin_type (str): Type of origin wanted
             discovery_type (str): Type of discovery/recommendation wanted
         Returns:
@@ -49,25 +49,30 @@ class PlaylistManager:
         Generate a playlist description based on the discovery type and origin name
         Args:
             discovery_type (str): Type of discovery/recommendation wanted
-            origin_name (str): Name of the original track/playlist/album/artist
+            origin (dict): Information about the original track/playlist/album/artist
         Returns:
             str: Generated playlist description
         """
         return input (f"Enter a description for the playlist: ")
 
-    def process_playlist_recommendation(origin_name, recommendations):
+    def process_playlist_recommendation(origin, recommendations):
         pass
 
     def change_playlist_name(self, old_name, new_name, is_default_playlist=False): # no need for is_default_playlist here, but maybe later
-        from cache_manager import update_cache_data
-        global default_playlist_name
-        # Get all user playlists and find the one to rename
-        if old_name == default_playlist_name:
-            default_playlist_name = new_name
-            # Update the cache with the new default playlist name
-            update_cache_data('default_playlist_name', new_name)
-            print(f"Warning Default playlist name changed from '{old_name}' to '{new_name}'")
+        from cache_manager import update_cache_data, load_cache_data
 
+        # need to update cache, if default_playlist_name is changed
+        if is_default_playlist:
+            print("Changing the default playlist name...")    
+            global default_playlist_name
+            default_playlist_name, *_ = load_cache_data()
+            if old_name == default_playlist_name:
+                default_playlist_name = new_name
+                # Update the cache with the new default playlist name
+                update_cache_data('default_playlist_name', new_name)
+                print(f"! Warning ! Default playlist name changed from '{old_name}' to '{new_name}'")
+
+        # Get all user playlists and find the one to rename
         all_playlists = sp.current_user_playlists()
         for item in all_playlists['items']:
             if item['name'] == old_name:
@@ -157,16 +162,18 @@ def add_to_queue():
     discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
 
     origin_id, is_track = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
-    origin_name = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
+    origin = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
 
-    recommendations = process_track_recommendation(origin_name, discovery_type, limit=default_limit) # get recommendations based on the track, discovery type and limit -> returns list of strings (song-artist pairs)
+    recommendations = process_track_recommendation(origin, discovery_type, limit=default_limit) # get recommendations based on the track, discovery type and limit -> returns list of strings (song-artist pairs)
     
     print(f"🎵 Found {len(recommendations)} recommendations:")
+    print(recommendations)
     for i, rec in enumerate(recommendations, 1):
         print(f"{i}. {rec}")
         track, artist = [part.strip() for part in rec.rsplit('-', 1)]
         track_id = element_name_to_id(track.strip(), "track") # get the track id from the name
         try:
+            # print(f"Adding {track} by {artist} to queue... (id: {track_id})")
             sp.add_to_queue(track_id, None) # add the track to the queue device_id=None (None = current device) see docs
         except Exception as e:
             print(f"Error adding to queue: {e}")
@@ -215,6 +222,7 @@ def get_discovery_type():
         return '"music in the same decade as"'
 
 def from_where():
+    is_track = False
     # Get all user playlists and create a list of choices
     all_playlists = sp.current_user_playlists()
     playlist_choices = [item['name'] for item in all_playlists['items']]

@@ -12,7 +12,7 @@ def update_cache_data(key, value):
                 cache_data = json.load(cache)
         except (FileNotFoundError, json.JSONDecodeError):
             # File doesn't exist or is empty/invalid
-            pass
+            raise FileNotFoundError("Cache file not found or is empty. Creating a new one.")
 
         # Update the specific key
         cache_data[key] = value
@@ -20,8 +20,9 @@ def update_cache_data(key, value):
         # Write back all data
         with open('data/prod/cache.json', 'w') as cache:
             json.dump(cache_data, cache)
-            
+        
         return True
+    
     except Exception as e:
         print(f"❌ Error updating cache: {e}")
         return False
@@ -33,8 +34,8 @@ def load_cache_data():
     if os.path.exists('data/prod/cache.json'):
         with open('data/prod/cache.json', 'r') as cache:
             cache_data = json.load(cache)
-            default_limit = cache_data.get('default_limit', None)
-    else: default_limit = None # read the default playlist name from the cache (if it exists)
+            default_limit = cache_data.get('default_limit')
+    else: default_limit = 10 # read the default playlist name from the cache (if it exists)
 
     if os.path.exists('data/prod/cache.json'):
         with open('data/prod/cache.json', 'r') as cache:
@@ -49,6 +50,7 @@ def load_cache_data():
                 print("playlist id from name: is something else (but cant show lol)")
             else: 
                 print("cache matches")
+        return default_playlist_name, default_playlist_id, default_limit
     else: 
         default_playlist_name = None # read the default playlist name from the cache (if it exists)
         print("No cache file found. Please set one ('data/prod/cache.json') to save the default playlist name.")

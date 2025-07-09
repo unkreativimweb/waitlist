@@ -71,7 +71,6 @@ def what_to_do():
         return False # exit the loop
     
 def settings():
-    global default_playlist_name
     # Create interactive prompts for user input
     basic_settings = [
         inquirer.List('settings',
@@ -138,10 +137,13 @@ def settings():
         elif advanced_settings_answer['advanced_settings'] == 'back':
             settings()
     elif basic_settings_answer['settings'] == 'set/change default playlist':
+        global default_playlist_name
         new_name = input("Enter the new default playlist name: ")
         if default_playlist_name is not None: # lol
             print("old name assigned to None")
             old_name = default_playlist_name
+        else: print(f"old name is: {default_playlist_name}, new name: {new_name}")
+        
         default_playlist_name = new_name
 
         # rewrite the default playlist name in the cache so it can be used later
@@ -160,6 +162,7 @@ def settings():
                     'create new default playlist'
                 ]),
         ])
+        
         if override_or_create_new_default['override/create default'] == 'overwrite old default playlist name':
             if old_name is not None:
                 playlist_manager.change_playlist_name(old_name, new_name, True) # change playlist name
@@ -171,11 +174,11 @@ def settings():
             playlist_manager.create_playlist(sp.me()['id'], default_playlist_name) # create a new playlist with the new name
             update_cache_data('default_playlist_name', new_name) # update the cache with the new default playlist name
             print(f"New default playlist created: {new_name}")
-        
-        # get element id from name and save to cache
-        global default_playlist_id
-        default_playlist_id = playlist_manager.find_user_playlist_id(default_playlist_name) # get the playlist id from the name
-        update_cache_data('default_playlist_id', default_playlist_id) # update the cache with the new default playlist id
+
+            # find new id and save it to cache for later use
+            global default_playlist_id
+            default_playlist_id = playlist_manager.find_user_playlist_id(default_playlist_name) # get the playlist id from the name
+            update_cache_data('default_playlist_id', default_playlist_id) # update the cache with the new default playlist id
         
     elif basic_settings_answer['settings'] == 'change default playlist description':
         new_description = input("Enter the new playlist description: ")
@@ -195,13 +198,20 @@ def settings():
         )
 
         print(f"Default Playlist description changed to: {new_description}")
-
-        
+   
     elif basic_settings_answer['settings'] == 'change playlist name':
         old_name = input("Enter the old playlist name: ")
         new_name = input("Enter the new playlist name: ")
-        playlist_manager.change_playlist_name(old_name, new_name) 
-    
+        if old_name == new_name:
+            print("Old and new playlist names are the same. No changes made.")
+            return
+        if old_name == default_playlist_name:
+            playlist_manager.change_playlist_name(old_name, new_name, True)
+        else:
+            playlist_manager.change_playlist_name(old_name, new_name, False)
+
+
+
     elif basic_settings_answer['settings'] == 'change default limit for recommendations':
         new_limit = input("Enter the new default limit for recommendations: ")
         default_limit = new_limit
@@ -223,7 +233,7 @@ def basic_process(playlist_id=None):
         print("this mode is not yet fully functional")
         return
     origin_id, is_track = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
-    origin_name = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
+    origin = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
     if playlist_id is None:
         print("playlist id is None")
         pass
@@ -231,7 +241,7 @@ def basic_process(playlist_id=None):
         print(f"discovered playlist id input ({playlist_id})")
 
     if is_track: # if a track was selected
-        recommendations = process_track_recommendation(origin_name, discovery_type, limit=default_limit) # get recommendations based on the track, discovery type and limit -> returns list of strings (song-artist pairs)
+        recommendations = process_track_recommendation(origin, discovery_type, limit=default_limit) # get recommendations based on the track, discovery type and limit -> returns list of strings (song-artist pairs)
         print(f"🎵 Found {len(recommendations)} recommendations:")
         for i, rec in enumerate(recommendations, 1):
             print(f"{i}. {rec}")
@@ -244,22 +254,22 @@ def basic_process(playlist_id=None):
         else:
             playlist_manager.fill_playlist(recommendations, playlist_id) # fill the playlist with the recommendations
 
-def process_track_recommendation(origin_name, discovery_type, limit):
+def process_track_recommendation(origin, discovery_type, limit):
     """
     Process a track and get AI recommendations based on its attributes
     Args:
-        origin_name (str): Track name in format "Song Name (type) - Artist"
+        origin (dict): Track information containing name and artist
         discovery_type (str): Type of discovery/recommendation wanted
         limit (int): Number of recommendations to return
     Returns:
         list: List of recommended tracks
     """
-    print(f"Processing track: {origin_name}")
+    print(f"Processing track: {origin}")
     print(f"Discovery type: {discovery_type}")
     # Extract track name and artist from the formatted string
-    track_name = origin_name.split(' - ')[0].split('(')[0].strip()
-    artist_name = origin_name.split(' - ')[1].strip()
-    
+    track_name = str(origin["track_name"])
+    artist_name = str(origin["artist"])
+
     # print(f"Processing track: '{track_name}' by '{artist_name}'")
     
     # Get additional track information from TheAudioDB
@@ -274,7 +284,7 @@ def process_track_recommendation(origin_name, discovery_type, limit):
     # ^ may be redundant, if database is used, instead of ai
 
     # Get AI recommendations
-    ai_response = ask_ai(discovery_type, origin_name, limit, track_attributes, lyric_attributes)
+    ai_response = ask_ai(discovery_type, origin, limit, track_attributes, lyric_attributes)
     
     # Convert AI response to list of recommendations
     recommendations = string_to_list(str(ai_response))
@@ -296,8 +306,8 @@ if __name__ == "__main__":
     sp = initialize_spotify_client()
     model = initialize_gemini_client()
     initialize_genius_client()
-    load_cache_data()
 
+    default_playlist_name, default_playlist_id, default_limit = load_cache_data() # load the cache data to get the default playlist name and id
     playlist_manager = PlaylistManager(sp)
 
     while what_to_do():

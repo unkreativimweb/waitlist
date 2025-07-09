@@ -7,7 +7,6 @@ def get_lyrics_genius(artist_name, track_name):
     """
     Get lyrics from Genius API
     Returns: Lyrics as a string or None if not found
-    FIXME: IS THIS VAI API OR BS4???????
     FIXME: ALSO: WHY THE FUCK IS IT SEARCHING FOR THE WRONG TRACKS (SEE CELO ABDI 20 ZOLL MAE)
     """
     # Load token from cache
@@ -27,7 +26,10 @@ def get_lyrics_genius(artist_name, track_name):
     track_id = get_genius_track_id(artist_name, track_name) # get the song id from genius
     track_url = f"https://api.genius.com/songs/{track_id}" # get the song url from genius
     data = requests.get(track_url, headers=headers).json() # get the song data from genius
+    # print(track_id)
+    # print(track_url)
     # print(data) # print the song data
+
     lyrics_url = data['response']['song']['url'] # get the lyrics url from genius
     
     # Get the actual lyrics by scraping the page
@@ -78,15 +80,18 @@ def get_genius_track_id(artist_name, track_name):
 
         data = response.json()
         hits = data.get('response', {}).get('hits', [])
-        
-        if hits:
-            print("✅ API request successful!")
-            print(hits[0].get('result', {}).get('id'))
-            return hits[0].get('result', {}).get('id')
-        else:
-            print("❌ No results found")
+        # FIXME: if hits is empty, dont begin the entire thing at all, just return None
+        try:     
+            if hits:
+                print("✅ API request successful!")
+                print(hits[0].get('result', {}).get('id'))
+                return hits[0].get('result', {}).get('id')
+            else:
+                print("❌ No results found")
+                return None
+        except KeyError as e:
+            print(f"❌ KeyError: {e} - Response structure may have changed")
             return None
-
     except Exception as e:
         print(f"❌ Error accessing Genius API: {e}")
         return None
