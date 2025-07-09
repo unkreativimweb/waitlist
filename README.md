@@ -8,12 +8,13 @@ This project is not hosted - you'll need to create your own Spotify Developer ap
 coming soon...
 
 ## Structure
+```text
 waitlist/
 ├── README.md
 ├── LICENSE.md
 ├── genius_auth.mermaid
 ├── waitlist.mermaid
-├── data/                  # All generated, cache, and ignored files (in .gitignore)
+├── data/                  # All generated, cache, and ignored files
 │   ├── misc/              # development files
 │   ├── prod/
 │   │   ├── .spotify_cache
@@ -31,7 +32,8 @@ waitlist/
     ├── genius.py
     ├── main.py
     ├── spotify.py
-    └── utils.py 
+    └── utils.py
+```
 
 
 ## Flowchart
