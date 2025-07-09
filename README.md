@@ -7,6 +7,33 @@ This project is not hosted - you'll need to create your own Spotify Developer ap
 ## ✨ Features
 coming soon...
 
+## Structure
+waitlist/
+├── README.md
+├── LICENSE.md
+├── genius_auth.mermaid
+├── waitlist.mermaid
+├── data/                  # All generated, cache, and ignored files (in .gitignore)
+│   ├── misc/              # development files
+│   ├── prod/
+│   │   ├── .spotify_cache
+│   │   └── cache.json
+│   └── songs.db
+└── src/                   # Main source code
+    ├── database/
+    │   ├── factory.db
+    │   └── track_attributes.py
+    ├── ai.py
+    ├── audio_db.py
+    ├── cache_manager.py
+    ├── env.py
+    ├── genius_auth.py
+    ├── genius.py
+    ├── main.py
+    ├── spotify.py
+    └── utils.py 
+
+
 ## Flowchart
 ```mermaid
 ---
