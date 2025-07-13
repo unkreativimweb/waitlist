@@ -1,9 +1,6 @@
-# get the songs die eingeordnet werden sollen
-# kategorien der einordnung entscheiden und unterscheiden (genre, erscheinungsdatum, artists, bpm, Language, songlänge, 
-# lyrics: Sprachniveau, Thema[liebe, politik, ...], )
-
-# also 3 funktionen: A) genre, erschienungsdatum, artists, Language, songlänge B) bpm, C) lyrics: Sprachniveau, Thema, ...
-from src.waitlist import initialize_spotify_client, get_lyrics_genius, initialize_gemini_client, element_name_to_id, id_to_element_name
+from src.utils import initialize_spotify_client, element_name_to_id
+from src.env import initialize_gemini_client
+from src.genius import get_lyrics_genius
 import requests
 import os
 from dotenv import load_dotenv
@@ -11,7 +8,11 @@ from langdetect import detect
 import sqlite3
 import importlib # for debugging in terminal
 import time
-import traceback # for viewing full error tracebacks
+from datetime import date
+from bs4 import BeautifulSoup as bs
+
+global sp
+sp = initialize_spotify_client()  # initialize the Spotify client
 
 
 class data:
@@ -36,15 +37,16 @@ class data:
             language_level (str)
             topic (str)
     """
-    def __init__(self, artist, title, track_id, lyrics=None):
+    def __init__(self, artist=None, title=None, track_id=None, lyrics=None):
+        # FIXME: keep init as minimal as possible, so i can call the artist to dict with just artist
         self.artist = artist
         self.title = title
         self.track_id = track_id
         self.lyrics = lyrics
-        self.metadata = self.get_song_metadata(title, lyrics)  # get metadata for the song
-        self.genre = self.get_song_genre(title, artist)  # get genre for the song
+        # self.metadata = self.get_song_metadata(title, lyrics)  # get metadata for the song
+        # self.genre = self.get_song_genre(title, artist)  # get genre for the song
         # self.bpm = self.get_song_bpm(title, artist)  # FIXME: get bpm for the song
-        self.lyric_data = self.get_song_lyrics(title, artist, lyrics)  # get lyrics data for the song
+        # self.lyric_data = self.get_song_lyrics(title, artist, lyrics)  # get lyrics data for the song
 
     def get_getgenre_access_token(self):
         """
@@ -118,39 +120,11 @@ class data:
             print(f"Error retrieving metadata for {title} by {self.artist}: {e}")
             return None
         
-    def get_song_bpm(self, title, artist=None):
+    def get_song_bpm(self, title, artist=None): # TODO
         """
         Get the BPM (Beats Per Minute) of a song using the Spotify API.
         """
-        try:
-            query = f"track:{title}"
-            if artist:
-                query += f" artist:{artist}"
-            
-            # Search for the track
-            search = sp.search(q=query, type='track', limit=1)
-            if not search['tracks']['items']:
-                print(f"No track found for: {query}")
-                return None
-
-            # Get the track ID and make sure it's a list
-            track_id = search['tracks']['items'][0]['id']
-            print(f"Found track ID: {track_id}")
-
-            # Get audio features - note we pass a list of track IDs
-            audio_features = sp.audio_features([track_id])
-            
-            if not audio_features or not audio_features[0]:
-                print("No audio features found")
-                return None
-
-            tempo = audio_features[0].get('tempo')
-            print(f"Found BPM: {tempo}")
-            return tempo
-
-        except Exception as e:
-            print(f"Error getting BPM: {str(e)}")
-            return None
+        pass
 
     def get_song_genre(self, title, artist=None):
         """
@@ -268,13 +242,13 @@ class data:
                 "featured_artists": ', '.join(self.metadata.get("featured_artists", [])),
                 "language": self.metadata.get("language", ""),
                 "song_length": self.metadata.get("song_length", 0),
-                "top_genre": self.genre.get("top_genre", ""),
-                "other_genres": ', '.join(self.genre["other_genres"]) if isinstance(self.genre["other_genres"], list) else self.genre["other_genres"],
-                "genre_finished": self.genre.get("genre_finished", False),
+                "top_genre": self.get_song_genre(self.title, self.artist).get("top_genre", ""),
+                "other_genres": ', '.join(self.get_song_genre(self.title, self.artist)["other_genres"]) if isinstance(self.genre["other_genres"], list) else self.genre["other_genres"],
+                "genre_finished": self.get_song_genre(self.title, self.artist).get("genre_finished", False),
                 "bpm": None, # FIXME: bpm
                 "lyrics": self.lyrics,
-                "language_level": self.lyric_data.get("language_level", ""),
-                "topic": self.lyric_data.get("topic", ""),
+                "language_level": self.get_song_lyrics(self.title, self.artist, self.lyrics).get("language_level", ""),
+                "topic": self.get_song_lyrics(self.title, self.artist, self.lyrics).get("topic", ""),
             }
             return audio_features
         else:
@@ -292,38 +266,127 @@ class data:
             "title": self.title,
             "main_artist": self.artist,
             "main_artist_id": element_name_to_id(self.artist, "artist"),
-            "featured_artists": self.metadata.get("featured_artists", []),
-            "album_name": self.metadata.get("album_name", ""),
-            "album_id": self.metadata.get("album_id", ""),
+            "featured_artists": self.get_song_metadata(self.title, self.lyrics).get("featured_artists", []),
+            "album_name": self.get_song_metadata(self.title, self.lyrics).get("album_name", ""),
+            "album_id": self.get_song_metadata(self.title, self.lyrics).get("album_id", ""),
         }
 
     def artist_to_dict(self):
-        artist_id = self.artist
-        artist_name = id_to_element_name(artist_id)
-        monthly_listeners = None
-        """
-            id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                monthly_listeners INTEGER,
-                age INTEGER,
-                birth_date DATE,
-                number_of_tracks INTEGER,
-                number_of_albums INTEGER,
-                album_names TEXT#
-        """
+        artist_id = element_name_to_id(element_name=self.artist, element_type="artist")
+        artist_name = self.artist
+        today= date.today()
+        number_of_tracks = 0
+        album_names = []
+        album_ids = []
+        # TODO: artist follower can be aquired with sp.search
+        #  same with genres
+    
+        # Get monthly listeners from Spotify, by scraping the artist's page
+        try: 
+            headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/125.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
+            }
+            spotify_artist_url = f"https://open.spotify.com/intl-de/artist/{artist_id}"
+            response = requests.get(spotify_artist_url, headers=headers)
+            print(spotify_artist_url)
+            soup = bs(response.text, 'html.parser')
+            meta_tag = soup.find("meta", property="og:description")
+            if meta_tag:
+                content = meta_tag.get("content")
+                monthly_listeners = content.split(' ')[2]
+                monthly_listeners = monthly_listeners.replace('M', '00.000').replace('K', '000').replace('.', '')
+                monthly_listeners = int(monthly_listeners)
+        except Exception as e:
+            print(f"Error fetching artist data from Spotify: {e}")
+            return None
+
+        # Get birth date from Wikidata using SPARQL query
+        try:
+            url = "https://query.wikidata.org/sparql"
+            query = f"""
+            SELECT ?birthDate WHERE {{
+            ?person rdfs:label "{artist_name}"@en;
+                    wdt:P569 ?birthDate.
+            LIMIT 1}}
+            """
+            headers = {
+                "Accept": "application/sparql-results+json"
+            }
+            response = requests.get(url, params={'query': query}, headers=headers)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data['results']['bindings']:
+                    birth_date = data['results']['bindings'][0]['birthDate']['value'].split("T")[0]
+                else:
+                    birth_date = None
+            else:
+                print(f"Error: {response.status_code}")
+                birth_date = None
+        except Exception as e:
+            print(f"Error fetching birth date for {artist_name}: {e}")
+            birth_date = None
+
+        # Calculate age if birth_date is available
+        try:
+            age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+        except:
+            age = None
+
+        # Get number of albums and their respective names from Spotify
+        try:
+            artist_albums = sp.artist_albums(artist_id=artist_id, include_groups="album")
+            number_of_albums = artist_albums["total"]
+            for item in artist_albums["items"]:
+                album_names.append(item["name"]) 
+                album_ids.append(item["id"])
+        except Exception as e:
+            print(f"Error fetching album names and ids for {artist_name}: {e}")
+            number_of_tracks = None
+            number_of_albums = None
+            album_names = None
+
+        # Count all tracks by an artist by iterating through their spotify discography
+        try:
+            artist_discography = sp.artist_albums(artist_id=artist_id)["items"]  # Access the 'items' list
+            for item in artist_discography:
+                track_ids_of_album = sp.album_tracks(item["id"])["items"]  # Access the 'items' list
+                for track in track_ids_of_album:
+                    number_of_tracks += 1
+        except Exception as e:
+            print(f"Error fetching number of tracks for {artist_name}: {e}")
+
+        return {
+            "id": artist_id,
+            "name": artist_name,
+            "monthly_listeners": monthly_listeners,
+            "birth_date": birth_date,
+            "age": age,
+            "album_names": album_names,
+            "number_of_albums": number_of_albums,
+            "number_of_tracks": number_of_tracks
+        }
 
     def __str__(self):
-        out = {
-            "artist": self.artist,
-            "title": self.title,
-            "lyrics": self.lyrics,
-            "bpm": None,  # FIXME: get bpm for the song
-        }
-        out = {**out, **self.metadata, **self.lyric_data, **self.genre}
-        return str(out)  # <-- Convert dict to string for printing
+        # out = {
+        #     "artist": self.artist,
+        #     "title": self.title,
+        #     "lyrics": self.lyrics,
+        #     "bpm": None,  # FIXME: get bpm for the song
+        # }
+        # out = {**out, **self.metadata, **self.lyric_data, **self.genre}
+        # return str(out)  # <-- Convert dict to string for printing
+        pass
 
 class db:
-    def __init__(self, db_name='data\prod\songs.db'):
+    def __init__(self, db_name='data/prod/songs.db'):
         self.conn = sqlite3.connect(db_name)
         self.cursor = self.conn.cursor()
     
@@ -339,7 +402,7 @@ class db:
         self.cursor.execute("SELECT 1 FROM artists WHERE id = ?", (artist_id,))
         return self.cursor.fetchone() is not None
 
-    # TODO: track_data von audio features trennen
+    # TODO: track_data von audio features trennen (ist glaube fertig lol)
     def add_track(self, track_data):
         """
         Add a track to the database
@@ -392,81 +455,31 @@ class db:
         except sqlite3.IntegrityError as e:
             print(f"Error adding audio features: {e}")
 
-if __name__ == "__main__":
-    global sp
-    sp = initialize_spotify_client()  # initialize the Spotify client
-
-    # playlist_id = input("give playlist id or link: ")
-    playlist_id = "https://open.spotify.com/playlist/4qUAY4SFePhy63TeKz3OJo?si=46fa95f46015447c&pt=edbfbcf9956a09a617ce5be212a7dda5" # for testing purposes
-    if playlist_id[0:4] == "http":  # if the input is a link
-        playlist_id = playlist_id.split("/")[-1]  # extract the playlist ID from the link
-        if "?" in playlist_id:
-            playlist_id = playlist_id.split("?")[0]
-    
-    # Get tracks from the playlist
-    tracks = sp.playlist_tracks(playlist_id)
-    db_instance = db() 
-    
-    for item in tracks['items']:
+    def add_artist(self, artist_data=None):
+        if artist_data is None:
+            print("artist_dict is None in adding process, skipping...")
+            return
+        
         try:
-            track = item['track']
-            track_id = track['id']
-            track_name = track['name']
-            main_artist_name = track['artists'][0]['name']
-            print(main_artist_name, track_name, track_id)  # Debugging line
-
-            lyrics = get_lyrics_genius(main_artist_name, track_name)
-            track_data = data(main_artist_name, track_name, track_id, lyrics)
-            track_data_dict = track_data.track_data_to_dict()
-            audio_features_dict = track_data.audio_features_to_dict()
-            
-
-            # Efficiently check and insert
-            if not db_instance.track_exists(track_id):
-                if track_data_dict:
-                    db_instance.add_track(track_data_dict)
-                else:
-                    print(f"Skipping track {track_name} by {main_artist_name} due to missing data.")
-            else:
-                print(f"Track {track_name} by {main_artist_name} already exists in the tracks table.")
-
-            if not db_instance.audio_features_exists(track_id):
-                if audio_features_dict:
-                    db_instance.add_audio_features(audio_features_dict)
-                else:
-                    print(f"Skipping audio features for track {track_name} by {main_artist_name} due to missing data.")
-            else:
-                print(f"Audio features for track {track_name} by {main_artist_name} already exist in the audio_features table.")
-
-            if not db_instance.artist_exists(track_data_dict["main_artist_id"]):
-                # Add artist to the database if it doesn't exist
-                artist_dict = db_instance.artist_to_dict()
-
-                db_instance.cursor.execute('''
+            self.cursor.execute('''
                     INSERT INTO artists (id, name, monthly_listeners, age, birth_date, number_of_tracks, number_of_albums, album_names)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (track_data_dict["main_artist_id"], track_data_dict["main_artist"],
-                    track_data_dict["main_artist_monthly_listeners"], track_data_dict["main_artist_age"],
-                    track_data_dict["main_artist_birth_date"], track_data_dict["main_artist_number_of_tracks"],
-                    track_data_dict["main_artist_number_of_albums"], track_data_dict["main_artist_album_names"]))
-                db_instance.conn.commit()
-                            
-                """
-                id TEXT PRIMARY KEY,
-                                name TEXT NOT NULL,
-                                monthly_listeners INTEGER,
-                                age INTEGER,
-                                birth_date DATE,
-                                number_of_tracks INTEGER,
-                                number_of_albums INTEGER,
-                                album_names TEXT
-
-                """
+                ''', (
+                    artist_data["id"],
+                    artist_data["name"],
+                    artist_data["monthly_listeners"],
+                    artist_data["age"],
+                    artist_data["birth_date"],
+                    artist_data["number_of_tracks"],
+                    artist_data["number_of_albums"],
+                    ', '.join(artist_data["album_names"])
+                ))
+            self.conn.commit()
+        
+        except sqlite3.IntegrityError as e:
+            print(f"Error adding audio features: {e}")
+        
 
 
-
-        except Exception as e:
-            print(f"Error processing track {item.get('track', {}).get('name', 'unknown')}: {e}")
-            traceback.print_exc()
-            
-       
+if __name__ == "__main__":
+    pass
