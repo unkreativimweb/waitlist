@@ -1,7 +1,7 @@
 import json
 import requests
 from bs4 import BeautifulSoup
-import genius_auth as genius_auth
+import src.genius_auth as genius_auth
 
 def get_lyrics_genius(artist_name, track_name):
     """
@@ -34,7 +34,7 @@ def get_lyrics_genius(artist_name, track_name):
     
     # Get the actual lyrics by scraping the page
     page = requests.get(lyrics_url)
-    print(f"Scraping lyrics from: {lyrics_url}")
+    # print(f"Scraping lyrics from: {lyrics_url}")
     soup = BeautifulSoup(page.content, 'html.parser')
     
     # Find lyrics container and extract text
@@ -70,7 +70,7 @@ def get_genius_track_id(artist_name, track_name):
         search_query = f"{artist_name} {track_name}".replace(" ", "%20")
         url = f'https://api.genius.com/search?q={search_query}'
         # for debugging
-        print(f"search url for genius lyrics api: {url + search_query}")
+        # print(f"search url for genius lyrics api: {url + search_query}")
         # Make authenticated request
         response = requests.get(url, headers=headers)
         

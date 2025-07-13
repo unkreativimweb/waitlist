@@ -2,14 +2,13 @@ import inquirer
 import os
 import json
 import datetime
-from env import initialize_spotify_client, initialize_gemini_client, initialize_genius_client
-from utils import string_to_list
-from cache_manager import load_cache_data, update_cache_data
-from spotify import add_to_queue, get_discovery_type, from_where, PlaylistManager
-from utils import id_to_element_name
-from ai import get_lyric_attributes_ai, ask_ai
-from genius import get_lyrics_genius
-from audio_db import get_audio_db_info
+from src.env import initialize_spotify_client, initialize_gemini_client, initialize_genius_client
+from src.utils import string_to_list, id_to_element_name
+from src.cache_manager import load_cache_data, update_cache_data
+from src.spotify import add_to_queue, get_discovery_type, from_where, PlaylistManager
+from src.ai import get_lyric_attributes_ai, ask_ai
+from src.genius import get_lyrics_genius
+from src.audio_db import get_audio_db_info
 
 
 def what_to_do():
@@ -229,11 +228,11 @@ def basic_process(playlist_id=None):
     global discovery_type
     discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
     if "recommendations based on the time of day" in discovery_type or "decade specific music" in discovery_type or "new releases" in discovery_type or "top charts" in discovery_type:
-        print("Discovery type: ", discovery_type) # print the discovery type for debugging
+        # print("Discovery type: ", discovery_type) # print the discovery type for debugging
         print("this mode is not yet fully functional")
         return
     origin_id, is_track = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
-    origin = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
+    origin = id_to_element_name(element_id=origin_id, type="track") # convert id to name (for AI input) -> returns string
     if playlist_id is None:
         print("playlist id is None")
         pass
@@ -245,7 +244,6 @@ def basic_process(playlist_id=None):
         print(f"🎵 Found {len(recommendations)} recommendations:")
         for i, rec in enumerate(recommendations, 1):
             print(f"{i}. {rec}")
-        print("")  # print a new line for better readability
 
         # Create the playlist if not already created
         if playlist_id is None:

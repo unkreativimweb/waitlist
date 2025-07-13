@@ -1,6 +1,6 @@
 import json
 import os
-from utils import element_name_to_id
+from src.utils import element_name_to_id
 
 def update_cache_data(key, value):
     """Update a specific key in the cache file while preserving other data"""

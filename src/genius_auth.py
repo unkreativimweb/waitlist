@@ -69,7 +69,6 @@ def get_authorization_code():
     
     # Start a local web server to handle the redirect
     PORT = 8080
-    print(f"Starting local server on port {PORT}...")
     
     with socketserver.TCPServer(("", PORT), AuthHandler) as httpd:
         print("Server started. Waiting for authorization...")
@@ -169,7 +168,7 @@ def test_api_call(access_token):
     
     if response.status_code == 200:
         user_data = response.json()
-        print("\nAPI call successful!")
+        # print("\nAPI call successful!")
         print(f"Logged in as: {user_data['response']['user']['name']}")
         return user_data
     else:

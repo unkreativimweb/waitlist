@@ -1,4 +1,4 @@
-from env import initialize_spotify_client
+from src.env import initialize_spotify_client
 import requests
 import inquirer
 import datetime
@@ -162,12 +162,11 @@ def add_to_queue():
     discovery_type = get_discovery_type() # auf was soll sich suche beziehen (mood/genre ehatever) -> returns string
 
     origin_id, is_track = from_where() # von wo soll gesucht werden (playlist/song/liked songs/album/artist) -> returns id
-    origin = id_to_element_name(origin_id) # convert id to name (for AI input) -> returns string
+    origin = id_to_element_name(element_id=origin_id, type="track") # convert id to name (for AI input) -> returns string
 
     recommendations = process_track_recommendation(origin, discovery_type, limit=default_limit) # get recommendations based on the track, discovery type and limit -> returns list of strings (song-artist pairs)
     
     print(f"🎵 Found {len(recommendations)} recommendations:")
-    print(recommendations)
     for i, rec in enumerate(recommendations, 1):
         print(f"{i}. {rec}")
         track, artist = [part.strip() for part in rec.rsplit('-', 1)]
@@ -179,7 +178,6 @@ def add_to_queue():
             print(f"Error adding to queue: {e}")
             continue
         
-    print("")  # print a new line for better readability
 
 def get_discovery_type():
     what_type = [
@@ -292,7 +290,6 @@ def from_where():
         
         # Get user's track selection and return the corresponding track ID
         answer = inquirer.prompt(track_question)
-        print("==========this is for debugging purposes==========\n")
         selected_track = answer['track']
         global track_id
         track_id = track_info[selected_track]

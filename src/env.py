@@ -4,7 +4,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from spotipy.oauth2 import SpotifyOAuth
 import google.generativeai as genai
-import genius_auth as genius_auth
+import src.genius_auth as genius_auth
 
 
 def load_env_variables():
@@ -53,14 +53,14 @@ def initialize_genius_client():
     try: 
         # Get vars from env
         SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, GOOGLE_API_KEY, GENIUS_CLIENT_ID, GENIUS_CLIENT_SECRET, GENIUS_REDIRECT_URI = load_env_variables()
-        print(f"Genius client id: {GENIUS_CLIENT_ID}; Genius client secret: {GENIUS_CLIENT_SECRET}") 
+        # print(f"Genius client id: {GENIUS_CLIENT_ID}; Genius client secret: {GENIUS_CLIENT_SECRET}") 
         # TODO: WARNING: THE REDIRECT URI IS USED BY TWO DIFFERENT CLIENTS (SPOTIFY AND GENIUS)
         AUTH_URL = "https://api.genius.com/oauth/authorize"
         TOKEN_URL = "https://api.genius.com/oauth/token"
 
         # Get the authorization info & code from the callback server
         genius_token_info = genius_auth.main()
-        print(f"Genius token info: {genius_token_info}") # Print the token info for debugging
+        # print(f"Genius token info: {genius_token_info}") # Print the token info for debugging
         return
         # authorization_code = genius_token_info['code']
 

@@ -1,4 +1,4 @@
-from env import initialize_gemini_client
+from src.env import initialize_gemini_client
 import json
 
 model = initialize_gemini_client()  # Initialize the Gemini model
@@ -29,8 +29,8 @@ def ask_ai(discovery_type, origin, limit, track_attributes, lyric_attributes):
     #     print("❌ Gemini API is not working properly")
     #     return "ERROR: Gemini API unavailable"
 
-    print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
-    print('Limit: ', limit) # Print the limit (number of recommendations)
+    # print('Origin: ', origin) # Print the origin (playlist/song/liked songs/album/artist)
+    # print('Limit: ', limit) # Print the limit (number of recommendations)
     track_attributes = json.dumps(track_attributes) # Convert track attributes to JSON string for AI input
     text = """You are a music recommendation engine. Your task is to recommend music based on the following criteria:
 
@@ -59,8 +59,8 @@ def ask_ai(discovery_type, origin, limit, track_attributes, lyric_attributes):
         )
     response = model.generate_content(text)
     # print("AI Input: ", text)
-    print("AI Response: ", response.text) # Print the AI's response
-    print("==================================================\n")
+    # print("AI Response: ", response.text) # Print the AI's response
+    # print("==================================================\n")
     return response.text
 
 def get_lyric_attributes_ai(lyrics):
